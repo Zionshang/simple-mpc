@@ -7,18 +7,18 @@
 ///////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include "simple-mpc/deprecated.hpp"
+#include "simple-mpc/fwd.hpp"
+#include "simple-mpc/foot-trajectory.hpp"
+#include "simple-mpc/ocp-handler.hpp"
+#include "simple-mpc/robot-handler.hpp"
+
 #include <aligator/core/stage-data.hpp>
 #include <aligator/fwd.hpp>
 #include <aligator/modelling/dynamics/fwd.hpp>
 #include <aligator/modelling/dynamics/integrator-explicit.hpp>
 #include <aligator/modelling/dynamics/multibody-constraint-fwd.hpp>
 #include <aligator/solvers/proxddp/solver-proxddp.hpp>
-
-#include "simple-mpc/deprecated.hpp"
-#include "simple-mpc/foot-trajectory.hpp"
-#include "simple-mpc/fwd.hpp"
-#include "simple-mpc/ocp-handler.hpp"
-#include "simple-mpc/robot-handler.hpp"
 
 namespace simple_mpc
 {

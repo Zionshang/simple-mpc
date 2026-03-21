@@ -1,10 +1,8 @@
-include("${JRL_CMAKE_MODULES}/python.cmake")
-include("${JRL_CMAKE_MODULES}/stubs.cmake")
-
-ADD_PROJECT_DEPENDENCY(eigenpy 3.9.1 REQUIRED)
+find_package(Python3 REQUIRED COMPONENTS Interpreter Development.Module)
+find_package(eigenpy 3.9.1 REQUIRED)
 
 set(
-  ${PY_NAME}_SOURCES
+  SIMPLE_MPC_PYTHON_SOURCES
   module.cpp
   expose-robot-handler.cpp
   expose-problem.cpp
@@ -17,28 +15,21 @@ set(
   expose-friction-compensation.cpp
 )
 
-Python3_add_library(${PY_NAME}_pywrap MODULE WITH_SOABI ${${PY_NAME}_SOURCES})
-target_link_libraries(${PY_NAME}_pywrap PUBLIC ${PROJECT_NAME} eigenpy::eigenpy)
-set_target_properties(
-  ${PY_NAME}_pywrap
-  PROPERTIES
-    INSTALL_RPATH "\$ORIGIN/../../.."
-    LIBRARY_OUTPUT_DIRECTORY ${PY_NAME}
+Python3_add_library(simple_mpc_pywrap MODULE WITH_SOABI ${SIMPLE_MPC_PYTHON_SOURCES})
+target_link_libraries(simple_mpc_pywrap
+  PRIVATE
+  simple-mpc
+  eigenpy::eigenpy
+  Python3::Module
 )
-install(TARGETS ${PY_NAME}_pywrap DESTINATION ${${PY_NAME}_INSTALL_DIR})
+set_target_properties(simple_mpc_pywrap PROPERTIES PREFIX "")
 
-set(${PY_NAME}_PYTHON __init__.py)
-
-foreach(python ${${PY_NAME}_PYTHON})
-  PYTHON_INSTALL_ON_SITE(${PY_NAME} ${python})
-endforeach()
-
-if(GENERATE_PYTHON_STUBS)
-  LOAD_STUBGEN()
-  GENERATE_STUBS(
-    ${CMAKE_CURRENT_BINARY_DIR}
-    simple_mpc
-    ${PYTHON_SITELIB}
-    ${PY_NAME}_pywrap
-  )
-endif()
+set(SIMPLE_MPC_PYTHON_DIR "${PROJECT_SOURCE_DIR}/bindings/simple_mpc")
+add_custom_command(
+  TARGET simple_mpc_pywrap
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_if_different
+          $<TARGET_FILE:simple_mpc_pywrap>
+          "${SIMPLE_MPC_PYTHON_DIR}/$<TARGET_FILE_NAME:simple_mpc_pywrap>"
+  COMMENT "Copying simple_mpc_pywrap to bindings/simple_mpc/"
+)

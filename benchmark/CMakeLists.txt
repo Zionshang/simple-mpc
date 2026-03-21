@@ -1,34 +1,29 @@
 find_package(benchmark REQUIRED)
 find_package(example-robot-data 4.0.9 REQUIRED)
 
-# Add a benchmark.
-function(create_bench benchfile)
-  get_filename_component(benchname ${benchfile} NAME_WE)
-  set(benchname "bench-${benchname}")
-  add_executable(${benchname} ${benchfile})
-  message(STATUS "Adding cpp example ${benchname}")
-  set_target_properties(${benchname} PROPERTIES LINKER_LANGUAGE CXX)
-  target_include_directories(${benchname} PUBLIC ${CMAKE_CURRENT_SOURCE_DIR})
+add_custom_target(run-benchmarks COMMAND ${CMAKE_COMMAND} -E echo "All benchmarks completed.")
 
-  target_link_libraries(${benchname} PUBLIC ${PROJECT_NAME})
-  target_link_libraries(${benchname} PUBLIC example-robot-data::example-robot-data)
-  target_link_libraries(${benchname} PUBLIC benchmark::benchmark)
+function(add_simple_mpc_benchmark source_file)
+  get_filename_component(benchmark_name "${source_file}" NAME_WE)
+  set(target_name "bench-${benchmark_name}")
 
-  # Add custom command to run this particular benchmark
-  add_custom_target(run-${benchname}
-      COMMAND ${benchname}
-      DEPENDS ${benchname}
-      WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  add_executable(${target_name} "${source_file}")
+  target_include_directories(${target_name} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  target_link_libraries(
+    ${target_name}
+    PRIVATE
+      simple-mpc
+      example-robot-data::example-robot-data
+      benchmark::benchmark
   )
-  # Add this benchmark in the dependencies to run all benchmarks
-  add_dependencies(run-benchmarks run-${benchname})
+
+  add_custom_target(run-${target_name}
+    COMMAND ${target_name}
+    DEPENDS ${target_name}
+    WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
+  )
+  add_dependencies(run-benchmarks run-${target_name})
 endfunction()
 
-# Create a custom target to run all benchmarks
-add_custom_target(run-benchmarks
-    COMMAND ${CMAKE_COMMAND} -E echo "All benchmarks run."
-)
-
-# Add benchmarks
-create_bench("talos.cpp")
-create_bench("go2.cpp")
+add_simple_mpc_benchmark(talos.cpp)
+add_simple_mpc_benchmark(go2.cpp)

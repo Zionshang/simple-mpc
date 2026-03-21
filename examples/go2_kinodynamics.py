@@ -203,7 +203,7 @@ L_measured = []
 v = np.zeros(6)
 v[0] = 0.2
 mpc.velocity_base = v
-for step in range(300):
+for step in range(3000):
     # print("Time " + str(step))
     land_LF = mpc.getFootLandCycle("FL_foot")
     land_RF = mpc.getFootLandCycle("RL_foot")

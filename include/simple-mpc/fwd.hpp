@@ -7,6 +7,8 @@
 ///////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include <cassert>
+
 #include <aligator/context.hpp>
 #include <aligator/modelling/contact-map.hpp>
 

@@ -1,0 +1,19 @@
+name: simple-mpc
+channels:
+  - conda-forge
+dependencies:
+  - python=3.10
+  - git
+  - ccache>=4.9.1
+  - cmake>=3.18
+  - cxx-compiler>=1.7.0
+  - ninja>=1.11
+  - eigenpy>=3.9.0
+  - pinocchio>=3,<4
+  - aligator>=0.16
+  - proxsuite>=0.7
+  - benchmark>=1.8.0
+  - tsid>=1.9.0,<2
+  - ndcurves
+  - example-robot-data
+  - pybullet>=3

@@ -7,15 +7,15 @@
 ///////////////////////////////////////////////////////////////////////////////
 #pragma once
 
+#include "simple-mpc/fwd.hpp"
+#include "simple-mpc/ocp-handler.hpp"
+
 #include <aligator/modelling/centroidal/angular-acceleration.hpp>
 #include <aligator/modelling/centroidal/angular-momentum.hpp>
 #include <aligator/modelling/centroidal/centroidal-acceleration.hpp>
 #include <aligator/modelling/centroidal/centroidal-translation.hxx>
 #include <aligator/modelling/centroidal/linear-momentum.hpp>
 #include <aligator/modelling/dynamics/centroidal-fwd.hpp>
-
-#include "simple-mpc/fwd.hpp"
-#include "simple-mpc/ocp-handler.hpp"
 
 namespace simple_mpc
 {

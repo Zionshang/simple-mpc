@@ -14,35 +14,36 @@ The **Simple-mpc** library provides:
 
 ## Installation
 
-### Build from source (devel)
-0. Install Pixi (from prefix.dev) : see https://pixi.sh/latest/installation/
+### Build from source (local conda workflow)
+0. Install Miniconda or Anaconda.
 
 1. Clone repo.
 ```bash
-git clone git@github.com:Simple-Robotics/simple-mpc.git --recursive
+git clone git@github.com:Simple-Robotics/simple-mpc.git
 cd simple-mpc
 ```
 
-2. Build and install
+2. Create and activate the development environment.
 ```bash
-pixi run install
+conda env create -f environment.yml
+conda activate simple-mpc
 ```
 
-3. Run an example
+3. Configure and build.
 ```bash
-pixi shell
-python examples/go2_kinodynamics.py
+cmake -G Ninja -B build -S . \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DBUILD_PYTHON_INTERFACE=ON \
+  -DBUILD_TESTING=OFF \
+  -DBUILD_BENCHMARK=OFF
+cmake --build build
 ```
 
-#### Dependencies
+4. Run an example.
+```bash
+PYTHONPATH=bindings python examples/go2_kinodynamics.py
+```
 
-* [Aligator](https://github.com/edantec/aligator) | [conda](https://anaconda.org/conda-forge/aligator)
-* [proxsuite](https://github.com/Simple-Robotics/proxsuite.git) | [conda](https://anaconda.org/conda-forge/proxsuite)
-* [Pinocchio](https://github.com/stack-of-tasks/pinocchio) | [conda](https://anaconda.org/conda-forge/pinocchio)
-* [hpp-fcl (renamed coal)](https://github.com/humanoid-path-planner/hpp-fcl) | [conda](https://anaconda.org/conda-forge/coal)
-* [tsid](https://github.com/stack-of-tasks/tsid) >= 1.9.0 | [conda](https://anaconda.org/conda-forge/tsid)
-* [ndcurves](https://github.com/loco-3d/ndcurves)
-* [Eigen3](https://eigen.tuxfamily.org) >= 3.3.7
-* [eigenpy](https://github.com/stack-of-tasks/eigenpy) >=3.9.0 (Python bindings)
-* (optional) [example-robot-data](https://github.com/Gepetto/example-robot-data) (for tests, benchmarks and examples | [conda](https://anaconda.org/conda-forge/example-robot-data)
-* (optional) [pybullet](https://github.com/bulletphysics/bullet3) (Simulation examples) | [conda](https://anaconda.org/conda-forge/pybullet)
+`ndcurves` is expected to be installed in the active conda environment.
+
+Enable `-DBUILD_TESTING=ON` to build tests and `-DBUILD_BENCHMARK=ON` to build benchmarks.
