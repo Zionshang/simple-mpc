@@ -17,3 +17,5 @@ dependencies:
   - ndcurves
   - example-robot-data
   - pybullet>=3
+  - meshcat
+  - meshcat-python

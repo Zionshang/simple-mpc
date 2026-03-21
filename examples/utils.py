@@ -1,10 +1,121 @@
+import os
+import time
+
+import example_robot_data
+import meshcat.geometry as mg
 import numpy as np
 import pinocchio as pin
-import example_robot_data
-import os
+
+from simple_mpc import RobotDataHandler
 
 CURRENT_DIRECTORY = os.getcwd()
 DEFAULT_SAVE_DIR = CURRENT_DIRECTORY + "/tmp"
+
+
+class MPCMeshcatVisualizer:
+    def __init__(
+        self,
+        robot,
+        model_handler,
+        foot_names,
+        dt,
+        force_scale=0.0025,
+        open_viewer=True,
+        viewer_name="simple_mpc",
+    ):
+        self.robot = robot
+        self.model_handler = model_handler
+        self.foot_names = list(foot_names)
+        self.dt = dt
+        self.force_scale = force_scale
+        self.data_handler = RobotDataHandler(model_handler)
+        self.foot_ids = {
+            foot_name: model_handler.getFootNb(foot_name) for foot_name in self.foot_names
+        }
+
+        self.viz = pin.visualize.MeshcatVisualizer(
+            robot.model,
+            robot.collision_model,
+            robot.visual_model,
+        )
+        self.viz.initViewer(open=open_viewer)
+        self.viz.loadViewerModel(viewer_name)
+        self.viewer = self.viz.viewer
+
+        self.reference_color = 0x3A86FF
+        self.optimized_color = 0xE63946
+        self.force_color = 0xF77F00
+
+    def capture_horizon(self, mpc):
+        horizon = len(mpc.us)
+        force_size = 3
+        optimized = {foot_name: [] for foot_name in self.foot_names}
+        reference = {foot_name: [] for foot_name in self.foot_names}
+        forces_stage0 = {}
+        positions_stage0 = {}
+
+        for t in range(horizon):
+            self.data_handler.updateInternalData(np.array(mpc.xs[t]), True)
+            control_t = np.array(mpc.us[t])
+            force_t = control_t[: len(self.foot_names) * force_size].reshape(len(self.foot_names), force_size)
+            for foot_index, foot_name in enumerate(self.foot_names):
+                optimized_position = np.array(
+                    self.data_handler.getFootPose(self.foot_ids[foot_name]).translation
+                ).copy()
+                optimized[foot_name].append(optimized_position)
+                reference[foot_name].append(
+                    np.array(mpc.getReferencePose(t, foot_name).translation).copy()
+                )
+                if t == 0:
+                    positions_stage0[foot_name] = optimized_position
+                    forces_stage0[foot_name] = force_t[foot_index].copy()
+
+        return {
+            "optimized": {name: np.asarray(points) for name, points in optimized.items()},
+            "reference": {name: np.asarray(points) for name, points in reference.items()},
+            "force_positions": positions_stage0,
+            "forces": forces_stage0,
+        }
+
+    def display_configuration(self, q):
+        self.viz.display(q)
+
+    def display_horizon(self, horizon_data):
+        for foot_name in self.foot_names:
+            self._set_polyline(
+                f"horizon/reference/{foot_name}",
+                horizon_data["reference"][foot_name],
+                self.reference_color,
+            )
+            self._set_polyline(
+                f"horizon/optimized/{foot_name}",
+                horizon_data["optimized"][foot_name],
+                self.optimized_color,
+            )
+            self._set_force_segment(
+                f"forces/{foot_name}",
+                horizon_data["force_positions"][foot_name],
+                horizon_data["forces"][foot_name],
+            )
+
+    def play(self, q_traj, horizons, repeat=True):
+        print("Meshcat ready. Press Ctrl+C to stop playback.")
+        while True:
+            for q, horizon in zip(q_traj, horizons):
+                self.display_configuration(q)
+                self.display_horizon(horizon)
+                time.sleep(self.dt)
+            if not repeat:
+                break
+
+    def _set_polyline(self, path, points, color):
+        material = mg.LineBasicMaterial(color=color, linewidth=3)
+        geometry = mg.PointsGeometry(np.asarray(points).T.astype(np.float32))
+        self.viewer[path].set_object(mg.Line(geometry, material))
+
+    def _set_force_segment(self, path, position, force):
+        segment = np.vstack((position, position + self.force_scale * force))
+        self._set_polyline(path, segment, self.force_color)
 
 
 def loadTalos():
@@ -34,7 +145,6 @@ def loadTalos():
 def save_trajectory(
     xs,
     us,
-    # uq,
     com,
     FL_force,
     FR_force,
@@ -53,13 +163,9 @@ def save_trajectory(
     save_name=None,
     save_dir=DEFAULT_SAVE_DIR,
 ):
-    """
-    Saves data to a compressed npz file (binary)
-    """
     simu_data = {}
     simu_data["xs"] = xs
     simu_data["us"] = us
-    # simu_data["uq"] = uq
     simu_data["com"] = com
     simu_data["FL_force"] = FL_force
     simu_data["FR_force"] = FR_force
@@ -86,9 +192,6 @@ def save_trajectory(
 
 
 def load_data(npz_file):
-    """
-    Loads a npz archive of sim_data into a dict
-    """
     d = np.load(npz_file, allow_pickle=True, encoding="latin1")
     return d["data"][()]
 
