@@ -39,6 +39,7 @@ namespace simple_mpc
   class CentroidalOCP;
   class OCPHandler;
   class FrictionCompensation;
+  class FootPlanner;
 
   /// EIGEN TYPEDEFS
 

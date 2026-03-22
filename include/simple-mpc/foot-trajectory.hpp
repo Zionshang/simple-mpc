@@ -15,7 +15,7 @@
 namespace simple_mpc
 {
   /**
-   * @brief Foot trajectory generation
+   * @brief Foot trajectory generation over the whole MPC horizon.
    */
 
   using point3_t = Eigen::Vector3d;
@@ -26,9 +26,10 @@ namespace simple_mpc
   protected:
     std::map<std::string, point3_t> initial_poses_;
     std::map<std::string, point3_t> final_poses_;
+    std::map<std::string, piecewise_curve> swing_trajectories_;
+    std::map<std::string, bool> previous_in_contact_;
     std::map<std::string, std::vector<point3_t>> references_;
     double swing_apex_;
-    std::map<std::string, piecewise_curve> swing_trajectories_;
     int T_fly_;
     int T_contact_;
     size_t T_;
@@ -47,15 +48,22 @@ namespace simple_mpc
     piecewise_curve defineTranslationBezier(const point3_t & trans_init, const point3_t & trans_final);
 
     std::vector<point3_t> createTrajectory(
-      int time_to_land, point3_t & initial_trans, point3_t & final_trans, piecewise_curve trajectory_swing);
+      const std::string & ee_name,
+      const point3_t & current_trans,
+      bool in_contact,
+      const std::vector<int> & takeoff_times,
+      const std::vector<int> & land_times,
+      const std::vector<point3_t> & land_poses);
 
     void updateTrajectory(
-      bool update,
-      int landing_time,
       const point3_t & ee_trans,
-      const point3_t & final_trans,
+      bool in_contact,
+      const std::vector<int> & takeoff_times,
+      const std::vector<int> & land_times,
+      const std::vector<point3_t> & land_poses,
       const std::string & ee_name);
-    const std::vector<point3_t> & getReference(const std::string & ee_name)
+
+    const std::vector<point3_t> & getReference(const std::string & ee_name) const
     {
       return references_.at(ee_name);
     }

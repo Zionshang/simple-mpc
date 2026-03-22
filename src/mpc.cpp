@@ -7,7 +7,6 @@
 ///////////////////////////////////////////////////////////////////////////////
 
 #include "simple-mpc/mpc.hpp"
-#include "simple-mpc/foot-trajectory.hpp"
 #include "simple-mpc/ocp-handler.hpp"
 #include "simple-mpc/robot-handler.hpp"
 
@@ -29,14 +28,14 @@ namespace simple_mpc
     {
       const std::string & name = model_handler.getFootFrameName(foot_nb);
       starting_poses.insert({name, data_handler_->getFootPose(foot_nb).translation()});
-
-      relative_feet_poses_.insert(
-        {name, data_handler_->getBaseFramePose().inverse() * data_handler_->getFootPose(foot_nb)});
     }
-    foot_trajectories_ = FootTrajectory(
-      starting_poses, settings_.swing_apex, settings_.T_fly, settings_.T_contact, ocp_handler_->getSize());
-
-    foot_trajectories_.updateApex(settings.swing_apex);
+    foot_planner_ = FootPlanner(
+      starting_poses,
+      settings_.swing_apex,
+      settings_.T_fly,
+      settings_.T_contact,
+      ocp_handler_->getSize(),
+      settings_.timestep);
     x0_ = ocp_handler_->getProblemState(*data_handler_);
     x_reference_ = ocp_handler_->getReferenceState(0);
 
@@ -94,13 +93,15 @@ namespace simple_mpc
     now_ = WALKING;
 
     velocity_base_.setZero();
-    next_pose_.setZero();
-    twist_vect_.setZero();
   }
 
   void MPC::generateCycleHorizon(const std::vector<std::map<std::string, bool>> & contact_states)
   {
     contact_states_ = contact_states;
+    cycle_horizon_.clear();
+    cycle_horizon_data_.clear();
+    foot_takeoff_times_.clear();
+    foot_land_times_.clear();
     // Guarantee that cycle horizon size is higher than problem size
     int m = int(ocp_handler_->getProblem().numSteps()) / int(contact_states.size());
     for (int i = 0; i < m; i++)
@@ -112,8 +113,8 @@ namespace simple_mpc
     // Generate contact switch timings
     for (auto const & name : ee_names_)
     {
-      foot_takeoff_times_.insert({name, std::vector<int>()});
-      foot_land_times_.insert({name, std::vector<int>()});
+      foot_takeoff_times_[name] = std::vector<int>();
+      foot_land_times_[name] = std::vector<int>();
       for (size_t i = 1; i < contact_states_.size(); i++)
       {
         if (!contact_states_[i].at(name) and contact_states_[i - 1].at(name))
@@ -130,6 +131,9 @@ namespace simple_mpc
       if (!contact_states_.back().at(name) and contact_states_[0].at(name))
         foot_land_times_.at(name).push_back((int)(contact_states_.size() - 1 + ocp_handler_->getSize()));
     }
+
+    foot_planner_.reset(contact_states_[0]);
+
     std::map<std::string, bool> previous_contacts;
     for (auto const & name : ee_names_)
     {
@@ -263,7 +267,9 @@ namespace simple_mpc
           foot_land_times_.at(name)[i] -= 1;
       }
       if (!foot_land_times_.at(name).empty() and foot_land_times_.at(name)[0] < 0)
+      {
         foot_land_times_.at(name).erase(foot_land_times_.at(name).begin());
+      }
 
       for (size_t i = 0; i < foot_takeoff_times_.at(name).size(); i++)
         if (!updateOnlyHorizon or foot_takeoff_times_.at(name)[i] < (int)ocp_handler_->getSize())
@@ -275,39 +281,19 @@ namespace simple_mpc
     }
   }
 
-  void MPC::updateStepTrackerReferences()
+  std::vector<std::vector<bool>> MPC::getHorizonContactStates() const
   {
-    for (auto const & name : ee_names_)
+    std::vector<std::vector<bool>> horizon_contact_states(ocp_handler_->getSize());
+    for (unsigned long time = 0; time < ocp_handler_->getSize(); time++)
     {
-      const size_t foot_nb = ocp_handler_->getModelHandler().getFootNb(name);
-      int foot_land_time = -1;
-      if (!foot_land_times_.at(name).empty())
-        foot_land_time = foot_land_times_.at(name)[0];
-
-      bool update = true;
-      if (foot_land_time < settings_.T_fly)
-        update = false;
-
-      // Use the Raibert heuristics to compute the next foot pose
-      twist_vect_[0] =
-        -(data_handler_->getFootRefPose(foot_nb).translation()[1] - data_handler_->getBaseFramePose().translation()[1]);
-      twist_vect_[1] =
-        data_handler_->getFootRefPose(foot_nb).translation()[0] - data_handler_->getBaseFramePose().translation()[0];
-      next_pose_.head<2>() = data_handler_->getFootRefPose(foot_nb).translation().head<2>();
-      next_pose_.head<2>() += (velocity_base_.head<2>() + velocity_base_[5] * twist_vect_)
-                              * (settings_.T_fly + settings_.T_contact) * settings_.timestep;
-      next_pose_[2] = data_handler_->getFootPose(foot_nb).translation()[2];
-
-      foot_trajectories_.updateTrajectory(
-        update, foot_land_time, data_handler_->getFootPose(foot_nb).translation(), next_pose_, name);
-      pinocchio::SE3 pose = pinocchio::SE3::Identity();
-      for (unsigned long time = 0; time < ocp_handler_->getSize(); time++)
-      {
-        pose.translation() = foot_trajectories_.getReference(name)[time];
-        setReferencePose(time, name, pose);
-      }
+      horizon_contact_states[time] = ocp_handler_->getContactState(time);
     }
 
+    return horizon_contact_states;
+  }
+
+  void MPC::updateTerminalReferences()
+  {
     ocp_handler_->setReferenceState(ocp_handler_->getSize() - 1, x_reference_);
     ocp_handler_->setVelocityBase(ocp_handler_->getSize() - 1, velocity_base_);
 
@@ -315,12 +301,37 @@ namespace simple_mpc
     com_ref << 0, 0, 0;
     for (auto const & name : ee_names_)
     {
-      com_ref += foot_trajectories_.getReference(name).back();
+      com_ref += foot_planner_.getReference(name).back();
     }
     com_ref /= (double)ee_names_.size();
     com_ref[2] += com0_[2];
 
     ocp_handler_->updateTerminalConstraint(com_ref);
+  }
+
+  void MPC::updateStepTrackerReferences()
+  {
+    const std::vector<std::vector<bool>> horizon_contact_states = getHorizonContactStates();
+    for (auto const & name : ee_names_)
+    {
+      const std::size_t foot_nb = ocp_handler_->getModelHandler().getFootNb(name);
+      foot_planner_.updateFootReference(
+        name,
+        foot_nb,
+        horizon_contact_states,
+        foot_land_times_.at(name),
+        *data_handler_,
+        velocity_base_);
+
+      pinocchio::SE3 pose = pinocchio::SE3::Identity();
+      for (unsigned long time = 0; time < ocp_handler_->getSize(); time++)
+      {
+        pose.translation() = foot_planner_.getReference(name)[time];
+        setReferencePose(time, name, pose);
+      }
+    }
+
+    updateTerminalReferences();
   }
 
   void MPC::setReferencePose(const std::size_t t, const std::string & ee_name, const pinocchio::SE3 & pose_ref)

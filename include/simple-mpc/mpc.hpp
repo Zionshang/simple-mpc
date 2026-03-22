@@ -9,7 +9,7 @@
 
 #include "simple-mpc/deprecated.hpp"
 #include "simple-mpc/fwd.hpp"
-#include "simple-mpc/foot-trajectory.hpp"
+#include "simple-mpc/foot-planner.hpp"
 #include "simple-mpc/ocp-handler.hpp"
 #include "simple-mpc/robot-handler.hpp"
 
@@ -70,9 +70,10 @@ namespace simple_mpc
     std::vector<std::shared_ptr<StageData>> one_horizon_data_;
     std::vector<std::shared_ptr<StageModel>> standing_horizon_;
     std::vector<std::shared_ptr<StageData>> standing_horizon_data_;
-    FootTrajectory foot_trajectories_;
-    std::map<std::string, pinocchio::SE3> relative_feet_poses_;
+    FootPlanner foot_planner_;
     // INTERNAL UPDATING function
+    std::vector<std::vector<bool>> getHorizonContactStates() const;
+    void updateTerminalReferences();
     void updateStepTrackerReferences();
 
     // Memory preallocations:
@@ -88,8 +89,6 @@ namespace simple_mpc
   public:
     std::unique_ptr<SolverProxDDP> solver_;
     Vector6d velocity_base_;
-    Eigen::Vector3d next_pose_;
-    Eigen::Vector2d twist_vect_;
     MPCSettings settings_;
     std::shared_ptr<OCPHandler> ocp_handler_;
 

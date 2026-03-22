@@ -1,4 +1,8 @@
+import os
+import sys
+import termios
 import time
+import tty
 
 import example_robot_data as erd
 import numpy as np
@@ -10,10 +14,40 @@ from utils import MPCMeshcatVisualizer
 BASE_JOINT_NAME = "root_joint"
 FOOT_NAMES = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
 DT_MPC = 0.01
-HORIZON = 50
+HORIZON = 100
 SIMULATION_STEPS = 500
 T_DOUBLE_SUPPORT = 10
 T_SINGLE_SUPPORT = 30
+
+
+def read_single_key():
+    if not sys.stdin.isatty():
+        raise RuntimeError("step debug mode requires a TTY")
+
+    fd = sys.stdin.fileno()
+    old_settings = termios.tcgetattr(fd)
+    try:
+        tty.setraw(fd)
+        return sys.stdin.read(1)
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+
+
+def debug_play_step_by_step(visualizer, q_traj, horizons):
+    print("Meshcat debug mode ready.")
+    print("Press space to advance one step, 'q' to quit.")
+
+    for step, (q, horizon) in enumerate(zip(q_traj, horizons)):
+        visualizer.display_configuration(q)
+        visualizer.display_horizon(horizon)
+        print(f"step {step + 1}/{len(horizons)}", flush=True)
+
+        while True:
+            key = read_single_key()
+            if key == " ":
+                break
+            if key.lower() == "q":
+                return
 
 
 def build_model_handler():
@@ -31,8 +65,8 @@ def build_kinodynamics_problem(model_handler):
 
     w_basepos = [0, 0, 100, 10, 10, 0]
     w_legpos = [1, 1, 1]
-    w_basevel = [10, 10, 10, 10, 10, 10]
-    w_legvel = [0.1, 0.1, 0.1]
+    w_basevel = [10, 10, 100, 10, 10, 10]
+    w_legvel = [0.01, 0.01, 0.01]
     w_x = np.diag(np.array(w_basepos + w_legpos * 4 + w_basevel + w_legvel * 4))
 
     w_linforce = np.array([0.01, 0.01, 0.01])
@@ -55,7 +89,7 @@ def build_kinodynamics_problem(model_handler):
     w_centder_ang = np.ones(3) * 0.1
     w_centder = np.diag(np.concatenate((w_centder_lin, w_centder_ang)))
 
-    w_frame_diag = np.array([2000.0, 2000.0, 2000.0])
+    w_frame_diag = np.array([100.0, 100.0, 500.0])
     w_frame = np.diag(w_frame_diag)
     problem_conf = dict(
         timestep=DT_MPC,
@@ -186,7 +220,7 @@ def main():
         f"mean_solve_time={rollout['solve_times'].mean() * 1e3:.2f} ms",
     )
 
-    visualizer.play(rollout["q_traj"], rollout["horizon_history"], repeat=True)
+    debug_play_step_by_step(visualizer, rollout["q_traj"], rollout["horizon_history"])
 
 
 if __name__ == "__main__":
