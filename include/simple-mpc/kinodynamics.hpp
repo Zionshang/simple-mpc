@@ -48,6 +48,12 @@ namespace simple_mpc
     bool kinematics_limits;
     bool force_cone;
     bool land_cstr;
+
+    // Optional cost / terminal terms
+    bool cent_cost;
+    bool centder_cost;
+    bool term_cent_cost;
+    bool term_dcm_cstr;
   };
 
   class KinodynamicsOCP : public OCPHandler

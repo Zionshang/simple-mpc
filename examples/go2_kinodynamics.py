@@ -82,6 +82,10 @@ problem_conf = dict(
     kinematics_limits=True,
     force_cone=False,
     land_cstr=False,
+    cent_cost=True,
+    centder_cost=True,
+    term_cent_cost=True,
+    term_dcm_cstr=True,
 )
 T = 50
 

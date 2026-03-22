@@ -41,6 +41,10 @@ namespace simple_mpc::python
     conf.force_cone = bp::extract<bool>(settings["force_cone"]);
     conf.land_cstr = bp::extract<bool>(settings["land_cstr"]);
 
+    conf.cent_cost = bp::extract<bool>(settings["cent_cost"]);
+    conf.term_cent_cost = bp::extract<bool>(settings["term_cent_cost"]);
+    conf.term_dcm_cstr = bp::extract<bool>(settings["term_dcm_cstr"]);
+
     return new FullDynamicsOCP(conf, model_handler);
   }
 
@@ -128,6 +132,9 @@ namespace simple_mpc::python
     settings["kinematics_limits"] = conf.kinematics_limits;
     settings["force_cone"] = conf.force_cone;
     settings["land_cstr"] = conf.land_cstr;
+    settings["cent_cost"] = conf.cent_cost;
+    settings["term_cent_cost"] = conf.term_cent_cost;
+    settings["term_dcm_cstr"] = conf.term_dcm_cstr;
 
     return settings;
   }

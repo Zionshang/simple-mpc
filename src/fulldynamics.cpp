@@ -88,8 +88,12 @@ namespace simple_mpc
     rcost.addCost("state_cost", QuadraticStateCost(space, nu_, model_handler_.getReferenceState(), settings_.w_x));
     rcost.addCost("control_cost", QuadraticControlCost(space, Eigen::VectorXd::Zero(nu_), settings_.w_u));
 
-    auto cent_mom = CentroidalMomentumResidual(space.ndx(), nu_, model_handler_.getModel(), Eigen::VectorXd::Zero(6));
-    rcost.addCost("centroidal_cost", QuadraticResidualCost(space, cent_mom, settings_.w_cent));
+    if (settings_.cent_cost)
+    {
+      auto cent_mom =
+        CentroidalMomentumResidual(space.ndx(), nu_, model_handler_.getModel(), Eigen::VectorXd::Zero(6));
+      rcost.addCost("centroidal_cost", QuadraticResidualCost(space, cent_mom, settings_.w_cent));
+    }
 
     pinocchio::context::RigidConstraintModelVector cms;
 
@@ -419,12 +423,15 @@ namespace simple_mpc
   {
     auto ter_space = MultibodyPhaseSpace(model_handler_.getModel());
     auto term_cost = CostStack(ter_space, nu_);
-    auto cent_mom =
-      CentroidalMomentumResidual(ter_space.ndx(), nu_, model_handler_.getModel(), Eigen::VectorXd::Zero(6));
-
     term_cost.addCost(
       "state_cost", QuadraticStateCost(ter_space, nu_, model_handler_.getReferenceState(), settings_.w_x));
-    term_cost.addCost("centroidal_cost", QuadraticResidualCost(ter_space, cent_mom, settings_.w_cent * 10));
+
+    if (settings_.term_cent_cost)
+    {
+      auto cent_mom =
+        CentroidalMomentumResidual(ter_space.ndx(), nu_, model_handler_.getModel(), Eigen::VectorXd::Zero(6));
+      term_cost.addCost("centroidal_cost", QuadraticResidualCost(ter_space, cent_mom, settings_.w_cent * 10));
+    }
 
     return term_cost;
   }
@@ -434,6 +441,11 @@ namespace simple_mpc
     if (!problem_initialized_)
     {
       throw std::runtime_error("Create problem first!");
+    }
+    if (!settings_.term_dcm_cstr)
+    {
+      terminal_constraint_ = false;
+      return;
     }
 
     double tau = sqrt(com_ref[2] / 9.81);
@@ -446,7 +458,7 @@ namespace simple_mpc
 
   void FullDynamicsOCP::updateTerminalConstraint(const Eigen::Vector3d & com_ref)
   {
-    if (terminal_constraint_)
+    if (settings_.term_dcm_cstr && terminal_constraint_)
     {
       DCMPositionResidual * CoMres = problem_->term_cstrs_.getConstraint<DCMPositionResidual>(0);
 

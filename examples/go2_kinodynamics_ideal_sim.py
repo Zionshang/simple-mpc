@@ -55,6 +55,8 @@ def build_kinodynamics_problem(model_handler):
     w_centder_ang = np.ones(3) * 0.1
     w_centder = np.diag(np.concatenate((w_centder_lin, w_centder_ang)))
 
+    w_frame_diag = np.array([2000.0, 2000.0, 2000.0])
+    w_frame = np.diag(w_frame_diag)
     problem_conf = dict(
         timestep=DT_MPC,
         w_x=w_x,
@@ -63,7 +65,7 @@ def build_kinodynamics_problem(model_handler):
         w_centder=w_centder,
         gravity=gravity,
         force_size=force_size,
-        w_frame=np.eye(3) * 2000.0,
+        w_frame=w_frame,
         qmin=model_handler.getModel().lowerPositionLimit[7:],
         qmax=model_handler.getModel().upperPositionLimit[7:],
         mu=0.8,
@@ -72,6 +74,10 @@ def build_kinodynamics_problem(model_handler):
         kinematics_limits=True,
         force_cone=False,
         land_cstr=False,
+        cent_cost=False,
+        centder_cost=False,
+        term_cent_cost=False,
+        term_dcm_cstr=False,
     )
 
     problem = KinodynamicsOCP(problem_conf, model_handler)
@@ -92,7 +98,7 @@ def build_mpc(problem, model_handler, gravity):
         mu_init=1e-8,
         max_iters=1,
         num_threads=8,
-        swing_apex=0.15,
+        swing_apex=0.30,
         T_fly=T_SINGLE_SUPPORT,
         T_contact=T_DOUBLE_SUPPORT,
         timestep=DT_MPC,

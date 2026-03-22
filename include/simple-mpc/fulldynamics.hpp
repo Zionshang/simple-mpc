@@ -51,6 +51,11 @@ namespace simple_mpc
     bool force_cone;
     bool land_cstr;
 
+    // Optional cost / terminal terms
+    bool cent_cost;
+    bool term_cent_cost;
+    bool term_dcm_cstr;
+
     // Control limits
     Eigen::VectorXd umin;
     Eigen::VectorXd umax;
