@@ -17,7 +17,7 @@ find_package(proxsuite REQUIRED)
 find_package(tsid 1.9.0 REQUIRED)
 find_package(ndcurves REQUIRED CONFIG)
 
-file(GLOB_RECURSE SIMPLE_MPC_SRC src/*.cpp)
+file(GLOB_RECURSE SIMPLE_MPC_SRC CONFIGURE_DEPENDS src/*.cpp)
 add_library(simple-mpc SHARED ${SIMPLE_MPC_SRC})
 target_include_directories(simple-mpc PUBLIC include)
 target_link_libraries(simple-mpc

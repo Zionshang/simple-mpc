@@ -9,8 +9,13 @@
 #include "simple-mpc/foot-planner.hpp"
 #include "simple-mpc/robot-handler.hpp"
 
+#include <ndcurves/bezier_curve.h>
+#include <stdexcept>
+
 namespace simple_mpc
 {
+  using curve_translation = ndcurves::bezier_curve<float, double, false, point3_t>;
+
   FootPlanner::FootPlanner(
     const std::map<std::string, point3_t> & starting_poses,
     double swing_apex,
@@ -18,11 +23,21 @@ namespace simple_mpc
     int T_contact,
     size_t T,
     double timestep)
-  : foot_trajectories_(starting_poses, swing_apex, T_fly, T_contact, T)
+  : swing_apex_(swing_apex)
   , T_fly_(T_fly)
   , T_contact_(T_contact)
+  , T_(T)
   , timestep_(timestep)
   {
+    for (auto const & pose : starting_poses)
+    {
+      references_[pose.first] = std::vector<point3_t>(T, pose.second);
+      initial_poses_[pose.first] = pose.second;
+      final_poses_[pose.first] = pose.second;
+      swing_trajectories_[pose.first] = defineTranslationBezier(pose.second, pose.second);
+      previous_in_contact_[pose.first] = true;
+    }
+
     std::map<std::string, bool> initial_contact_states;
     for (auto const & pose : starting_poses)
     {
@@ -39,6 +54,7 @@ namespace simple_mpc
     {
       foot_land_positions_[contact.first] = std::vector<point3_t>();
       previous_contact_states_[contact.first] = contact.second;
+      previous_in_contact_[contact.first] = contact.second;
     }
   }
 
@@ -59,6 +75,118 @@ namespace simple_mpc
     next_pose[2] = data_handler.getFootPose(foot_nb).translation()[2];
 
     return next_pose;
+  }
+
+  piecewise_curve FootPlanner::defineTranslationBezier(
+    const point3_t & trans_init,
+    const point3_t & trans_final) const
+  {
+    std::vector<Eigen::Vector3d> points;
+    for (long i = 0; i < 4; i++)
+    {
+      points.push_back(trans_init);
+    }
+    Eigen::Vector3d midpoint = trans_init * 3 / 4 + trans_final * 1 / 4;
+    midpoint[2] += swing_apex_;
+    points.push_back(midpoint);
+    for (long i = 5; i < 9; i++)
+    {
+      points.push_back(trans_final);
+    }
+    curve_translation bezier_curve(curve_translation(points.begin(), points.end(), 0., 1.));
+
+    piecewise_curve curve;
+    curve.add_curve(bezier_curve);
+    return curve;
+  }
+
+  std::vector<point3_t> FootPlanner::createTrajectory(
+    const std::string & ee_name,
+    const point3_t & current_trans,
+    bool in_contact,
+    const std::vector<int> & takeoff_times,
+    const std::vector<int> & land_times,
+    const std::vector<point3_t> & land_poses) const
+  {
+    if (land_times.size() != land_poses.size())
+    {
+      throw std::runtime_error("land_times size does not match land_poses size");
+    }
+
+    std::vector<point3_t> trajectory(T_, current_trans);
+    point3_t stance_pose = current_trans;
+    std::size_t takeoff_id = 0;
+    std::size_t land_id = 0;
+    int swing_start_time = 0;
+    piecewise_curve swing_trajectory = defineTranslationBezier(current_trans, current_trans);
+
+    if (!in_contact && !land_poses.empty())
+    {
+      swing_start_time = land_times.front() - T_fly_;
+      swing_trajectory = swing_trajectories_.at(ee_name);
+    }
+
+    for (size_t t = 0; t < T_; t++)
+    {
+      const int time = static_cast<int>(t);
+
+      while (land_id < land_times.size() && land_times[land_id] < time)
+      {
+        stance_pose = land_poses[land_id];
+        in_contact = true;
+        land_id += 1;
+      }
+
+      if (in_contact)
+      {
+        if (takeoff_id < takeoff_times.size() && takeoff_times[takeoff_id] <= time)
+        {
+          swing_start_time = takeoff_times[takeoff_id];
+          in_contact = false;
+          const point3_t & target_pose = land_id < land_poses.size() ? land_poses[land_id] : stance_pose;
+          swing_trajectory = defineTranslationBezier(stance_pose, target_pose);
+          takeoff_id += 1;
+        }
+        else
+        {
+          trajectory[t] = stance_pose;
+          continue;
+        }
+      }
+
+      if (land_id >= land_times.size())
+      {
+        trajectory[t] = stance_pose;
+        continue;
+      }
+
+      const int landing_time = land_times[land_id];
+      const point3_t & landing_pose = land_poses[land_id];
+      if (time >= landing_time)
+      {
+        stance_pose = landing_pose;
+        trajectory[t] = stance_pose;
+        in_contact = true;
+        land_id += 1;
+        continue;
+      }
+
+      const int swing_duration = landing_time - swing_start_time;
+      if (swing_duration <= 0)
+      {
+        trajectory[t] = landing_pose;
+        continue;
+      }
+
+      double u = static_cast<double>(time - swing_start_time) / static_cast<double>(swing_duration);
+      if (u < 0.)
+        u = 0.;
+      if (u > 1.)
+        u = 1.;
+      trajectory[t] = swing_trajectory(static_cast<float>(u));
+    }
+
+    return trajectory;
   }
 
   void FootPlanner::updateFootReference(
@@ -129,15 +257,29 @@ namespace simple_mpc
       land_positions.push_back(computeFootLandingPose(foot_nb, data_handler, velocity_base));
     }
 
-    foot_trajectories_.updateTrajectory(
+    if (!land_positions.empty() && (in_contact || previous_in_contact_.at(ee_name)))
+    {
+      initial_poses_[ee_name] = data_handler.getFootPose(foot_nb).translation();
+      final_poses_[ee_name] = land_positions.front();
+      swing_trajectories_[ee_name] = defineTranslationBezier(initial_poses_.at(ee_name), final_poses_.at(ee_name));
+    }
+    else if (in_contact)
+    {
+      initial_poses_[ee_name] = data_handler.getFootPose(foot_nb).translation();
+      final_poses_[ee_name] = data_handler.getFootPose(foot_nb).translation();
+      swing_trajectories_[ee_name] = defineTranslationBezier(initial_poses_.at(ee_name), final_poses_.at(ee_name));
+    }
+
+    references_[ee_name] = createTrajectory(
+      ee_name,
       data_handler.getFootPose(foot_nb).translation(),
       in_contact,
       takeoff_times,
       land_times,
-      land_positions,
-      ee_name);
+      land_positions);
 
-    previous_contact_states_.at(ee_name) = in_contact;
+    previous_contact_states_[ee_name] = in_contact;
+    previous_in_contact_[ee_name] = in_contact;
   }
 
 } // namespace simple_mpc
