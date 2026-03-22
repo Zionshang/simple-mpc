@@ -36,6 +36,30 @@ namespace simple_mpc
       std::size_t foot_nb,
       const RobotDataHandler & data_handler,
       const Vector6d & velocity_base) const;
+    void extractPhaseTimings(
+      const std::vector<std::vector<bool>> & horizon_contact_states,
+      std::size_t foot_nb,
+      bool in_contact,
+      std::vector<int> & takeoff_times,
+      std::vector<int> & land_times) const;
+    void appendPreviewLandTimes(
+      bool in_contact,
+      const std::vector<int> & future_land_times,
+      const std::vector<int> & takeoff_times,
+      std::vector<int> & land_times) const;
+    void updateCommittedLandPositions(
+      const std::string & ee_name,
+      std::size_t foot_nb,
+      bool in_contact,
+      const std::vector<int> & land_times,
+      const RobotDataHandler & data_handler,
+      const Vector6d & velocity_base);
+    void updateSwingTrajectory(
+      const std::string & ee_name,
+      std::size_t foot_nb,
+      bool in_contact,
+      const std::vector<point3_t> & land_positions,
+      const RobotDataHandler & data_handler);
     piecewise_curve defineTranslationBezier(const point3_t & trans_init, const point3_t & trans_final) const;
     std::vector<point3_t> createTrajectory(
       const std::string & ee_name,
