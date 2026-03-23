@@ -8,7 +8,7 @@ class RobotModelHandler:
     def __init__(self, model: pin.Model, reference_configuration_name: str, base_frame_name: str):
         self._model = model.copy()
         self._base_frame_id = self._model.getFrameId(base_frame_name)
-        qref = np.array(self._model.referenceConfigurations[reference_configuration_name]).copy()
+        qref = np.array(self._model.referenceConfigurations[reference_configuration_name])
         self._reference_state = np.concatenate((qref, np.zeros(self._model.nv)))
         self._mass = float(pin.computeTotalMass(self._model))
         self._feet_frame_names: list[str] = []
@@ -79,56 +79,3 @@ class RobotModelHandler:
 
     def getModel(self) -> pin.Model:
         return self._model
-
-
-class RobotDataHandler:
-    def __init__(self, model_handler: RobotModelHandler):
-        self._model_handler = model_handler
-        self._data = model_handler.getModel().createData()
-        self._x = np.zeros(model_handler.getReferenceState().shape[0])
-        self.updateInternalData(model_handler.getReferenceState(), True)
-
-    def updateInternalData(self, q_or_x, v_or_updateJacobians=None, updateJacobians: bool = False) -> None:
-        model = self._model_handler.getModel()
-        if v_or_updateJacobians is None or isinstance(v_or_updateJacobians, (bool, np.bool_)):
-            x = np.asarray(q_or_x, dtype=float)
-            updateJacobians = bool(False if v_or_updateJacobians is None else v_or_updateJacobians)
-            q = x[: model.nq]
-            v = x[model.nq :]
-        else:
-            q = np.asarray(q_or_x, dtype=float)
-            v = np.asarray(v_or_updateJacobians, dtype=float)
-        self._x = np.concatenate((q, v))
-
-        pin.forwardKinematics(model, self._data, q, v)
-        pin.updateFramePlacements(model, self._data)
-        pin.centerOfMass(model, self._data, q, v)
-        pin.computeCentroidalMomentum(model, self._data, q, v)
-        if updateJacobians:
-            self.updateJacobiansMassMatrix(self._x)
-
-    def updateJacobiansMassMatrix(self, x: np.ndarray) -> None:
-        model = self._model_handler.getModel()
-        q = np.asarray(x[: model.nq], dtype=float)
-        v = np.asarray(x[model.nq :], dtype=float)
-        pin.computeJointJacobians(model, self._data, q)
-        pin.computeJointJacobiansTimeVariation(model, self._data, q, v)
-        pin.crba(model, self._data, q)
-        self._data.M[np.tril_indices(model.nv, -1)] = self._data.M.T[np.tril_indices(model.nv, -1)]
-        pin.nonLinearEffects(model, self._data, q, v)
-        pin.computeCentroidalMapTimeVariation(model, self._data, q, v)
-
-    def getFootRefPose(self, foot_nb: int) -> pin.SE3:
-        return self._data.oMf[self._model_handler.getFootRefFrameId(foot_nb)]
-
-    def getFootPose(self, foot_nb: int) -> pin.SE3:
-        return self._data.oMf[self._model_handler.getFootFrameId(foot_nb)]
-
-    def getBaseFramePose(self) -> pin.SE3:
-        return self._data.oMf[self._model_handler.getBaseFrameId()]
-
-    def getData(self):
-        return self._data
-
-    def getState(self) -> np.ndarray:
-        return self._x.copy()

@@ -8,7 +8,6 @@ import pinocchio as pin
 import aligator
 
 from .foot_planner import FootPlanner
-from .robot_handler import RobotDataHandler
 
 
 @dataclass
@@ -37,13 +36,16 @@ class MPC:
         self.ocp_handler_ = problem
 
         model_handler = self.ocp_handler_.getModelHandler()
-        self.data_handler_ = RobotDataHandler(model_handler)
-        self.data_handler_.updateInternalData(model_handler.getReferenceState(), True)
+        self.model_handler_ = model_handler
+        self.model_ = model_handler.getModel()
+        self.data_ = self.model_.createData()
+        self._update_kinematics(model_handler.getReferenceState(), update_com=True)
 
         starting_poses = {}
         for foot_nb in range(model_handler.getFeetNb()):
             name = model_handler.getFootFrameName(foot_nb)
-            starting_poses[name] = np.array(self.data_handler_.getFootPose(foot_nb).translation).copy()
+            foot_frame_id = self.model_handler_.getFootFrameId(foot_nb)
+            starting_poses[name] = np.array(self.data_.oMf[foot_frame_id].translation)
 
         self.foot_planner_ = FootPlanner(
             starting_poses,
@@ -54,7 +56,7 @@ class MPC:
             self.settings_.timestep,
         )
 
-        self.x0_ = self.ocp_handler_.getProblemState(self.data_handler_)
+        self.x0_ = np.array(model_handler.getReferenceState(), dtype=float)
         self.x_reference_ = self.ocp_handler_.getReferenceState(0)
 
         self.solver_ = aligator.SolverProxDDP(
@@ -79,10 +81,12 @@ class MPC:
         contact_poses = {}
         force_map = {}
         for name in self.ee_names_:
+            foot_nb = model_handler.getFootNb(name)
+            placement = self.data_.oMf[self.model_handler_.getFootFrameId(foot_nb)]
             contact_states[name] = True
             land_constraint[name] = False
-            contact_poses[name] = self.data_handler_.getFootPose(model_handler.getFootNb(name))
-            force_map[name] = force_ref.copy()
+            contact_poses[name] = pin.SE3(np.array(placement.rotation), np.array(placement.translation))
+            force_map[name] = force_ref
 
         self.xs_ = []
         self.us_ = []
@@ -105,14 +109,23 @@ class MPC:
         self.solver_.setup(self.ocp_handler_.getProblem())
         self.solver_.run(self.ocp_handler_.getProblem(), self.xs_, self.us_)
 
-        self.xs_ = [np.array(x).copy() for x in self.solver_.results.xs]
-        self.us_ = [np.array(u).copy() for u in self.solver_.results.us]
+        self.xs_ = [np.array(x) for x in self.solver_.results.xs]
+        self.us_ = [np.array(u) for u in self.solver_.results.us]
 
         self.solver_.max_iters = self.settings_.max_iters
 
-        self.com0_ = np.array(self.data_handler_.getData().com[0]).copy()
+        self.com0_ = np.array(self.data_.com[0])
         self.now_ = self.WALKING
         self.velocity_base_ = np.zeros(6)
+
+    def _update_kinematics(self, x: np.ndarray, update_com: bool = False) -> None:
+        x = np.asarray(x, dtype=float)
+        q = x[: self.model_.nq]
+        v = x[self.model_.nq :]
+        pin.forwardKinematics(self.model_, self.data_, q, v)
+        pin.updateFramePlacements(self.model_, self.data_)
+        if update_com:
+            pin.centerOfMass(self.model_, self.data_, q, v)
 
     @property
     def velocity_base(self):
@@ -171,7 +184,7 @@ class MPC:
                 0,
                 self.ocp_handler_.getModelHandler().getFootFrameName(0),
             )
-            force_ref = np.asarray(force_ref, dtype=float).copy()
+            force_ref = np.asarray(force_ref, dtype=float)
             force_zero = np.zeros_like(force_ref)
             force_ref[:] = 0.0
             if active_contacts > 0:
@@ -180,9 +193,10 @@ class MPC:
             contact_poses = {}
             force_map = {}
             for name in self.ee_names_:
-                foot_nb = self.ocp_handler_.getModelHandler().getFootNb(name)
-                contact_poses[name] = self.data_handler_.getFootPose(foot_nb)
-                force_map[name] = force_ref.copy() if state[name] else force_zero.copy()
+                foot_nb = self.model_handler_.getFootNb(name)
+                placement = self.data_.oMf[self.model_handler_.getFootFrameId(foot_nb)]
+                contact_poses[name] = pin.SE3(np.array(placement.rotation), np.array(placement.translation))
+                force_map[name] = force_ref if state[name] else force_zero
 
             land_contacts = {}
             for name in self.ee_names_:
@@ -226,13 +240,18 @@ class MPC:
     def updateStepTrackerReferences(self) -> None:
         horizon_contact_states = self.getHorizonContactStates()
         for name in self.ee_names_:
-            foot_nb = self.ocp_handler_.getModelHandler().getFootNb(name)
+            foot_nb = self.model_handler_.getFootNb(name)
+            foot_ref_frame_id = self.model_handler_.getFootRefFrameId(foot_nb)
+            base_frame_id = self.model_handler_.getBaseFrameId()
+            foot_frame_id = self.model_handler_.getFootFrameId(foot_nb)
             self.foot_planner_.updateFootReference(
                 name,
                 foot_nb,
                 horizon_contact_states,
                 self.foot_land_times_[name],
-                self.data_handler_,
+                self.data_.oMf[foot_ref_frame_id].translation,
+                self.data_.oMf[base_frame_id].translation,
+                self.data_.oMf[foot_frame_id].translation,
                 self.velocity_base_,
             )
 
@@ -277,11 +296,11 @@ class MPC:
             self.updateCycleTiming(True)
 
     def iterate(self, x: np.ndarray) -> None:
-        self.data_handler_.updateInternalData(x, False)
+        self._update_kinematics(x)
         self.recedeWithCycle()
         self.updateStepTrackerReferences()
 
-        self.x0_ = self.ocp_handler_.getProblemState(self.data_handler_)
+        self.x0_ = np.array(x, dtype=float)
         self.xs_.pop(0)
         self.xs_[0] = self.x0_.copy()
         self.xs_.append(self.xs_[-1].copy())
@@ -289,9 +308,9 @@ class MPC:
         self.us_.pop(0)
         self.us_.append(self.us_[-1].copy())
 
-        self.ocp_handler_.getProblem().x0_init = self.x0_.copy()
+        self.ocp_handler_.getProblem().x0_init = self.x0_
 
         self.solver_.run(self.ocp_handler_.getProblem(), self.xs_, self.us_)
 
-        self.xs_ = [np.array(xi).copy() for xi in self.solver_.results.xs]
-        self.us_ = [np.array(ui).copy() for ui in self.solver_.results.us]
+        self.xs_ = [np.array(xi) for xi in self.solver_.results.xs]
+        self.us_ = [np.array(ui) for ui in self.solver_.results.us]

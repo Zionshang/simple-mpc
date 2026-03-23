@@ -6,8 +6,6 @@ import meshcat.geometry as mg
 import numpy as np
 import pinocchio as pin
 
-from .robot_handler import RobotDataHandler
-
 
 class MPCMeshcatVisualizer:
     def __init__(
@@ -22,10 +20,11 @@ class MPCMeshcatVisualizer:
     ):
         self.robot = robot
         self.model_handler = model_handler
+        self.model = model_handler.getModel()
+        self.data = self.model.createData()
         self.foot_names = list(foot_names)
         self.dt = dt
         self.force_scale = force_scale
-        self.data_handler = RobotDataHandler(model_handler)
         self.foot_ids = {foot_name: model_handler.getFootNb(foot_name) for foot_name in self.foot_names}
 
         self.viz = pin.visualize.MeshcatVisualizer(
@@ -41,6 +40,17 @@ class MPCMeshcatVisualizer:
         self.optimized_color = 0xE63946
         self.force_color = 0xF77F00
 
+    def _update_kinematics(self, x: np.ndarray) -> None:
+        x = np.asarray(x, dtype=float)
+        q = x[: self.model.nq]
+        v = x[self.model.nq :]
+        pin.forwardKinematics(self.model, self.data, q, v)
+        pin.updateFramePlacements(self.model, self.data)
+
+    def _get_foot_translation(self, foot_name: str) -> np.ndarray:
+        foot_frame_id = self.model_handler.getFootFrameId(self.foot_ids[foot_name])
+        return np.array(self.data.oMf[foot_frame_id].translation)
+
     def capture_horizon(self, mpc):
         horizon = len(mpc.us)
         force_size = 3
@@ -50,18 +60,16 @@ class MPCMeshcatVisualizer:
         positions_stage0 = {}
 
         for t in range(horizon):
-            self.data_handler.updateInternalData(np.array(mpc.xs[t]), True)
+            self._update_kinematics(np.array(mpc.xs[t]))
             control_t = np.array(mpc.us[t])
             force_t = control_t[: len(self.foot_names) * force_size].reshape(len(self.foot_names), force_size)
             for foot_index, foot_name in enumerate(self.foot_names):
-                optimized_position = np.array(
-                    self.data_handler.getFootPose(self.foot_ids[foot_name]).translation
-                ).copy()
+                optimized_position = self._get_foot_translation(foot_name)
                 optimized[foot_name].append(optimized_position)
-                reference[foot_name].append(np.array(mpc.getReferencePose(t, foot_name).translation).copy())
+                reference[foot_name].append(np.array(mpc.getReferencePose(t, foot_name).translation))
                 if t == 0:
                     positions_stage0[foot_name] = optimized_position
-                    forces_stage0[foot_name] = force_t[foot_index].copy()
+                    forces_stage0[foot_name] = np.array(force_t[foot_index])
 
         return {
             "optimized": {name: np.asarray(points) for name, points in optimized.items()},

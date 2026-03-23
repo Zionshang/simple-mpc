@@ -29,10 +29,10 @@ class FootPlanner:
         self.previous_contact_states_: dict[str, bool] = {}
 
         for name, pose in starting_poses.items():
-            p = np.asarray(pose, dtype=float).copy()
+            p = np.array(pose, dtype=float)
             self.references_[name] = [p.copy() for _ in range(self.T_)]
-            self.initial_poses_[name] = p.copy()
-            self.final_poses_[name] = p.copy()
+            self.initial_poses_[name] = p
+            self.final_poses_[name] = p
             self.swing_trajectories_[name] = self.defineTranslationBezier(p, p)
             self.previous_in_contact_[name] = True
 
@@ -47,21 +47,23 @@ class FootPlanner:
             self.previous_contact_states_[name] = bool(contact)
             self.previous_in_contact_[name] = bool(contact)
 
-    def computeFootLandingPose(self, foot_nb, data_handler, velocity_base: np.ndarray) -> np.ndarray:
-        foot_ref = np.array(data_handler.getFootRefPose(foot_nb).translation).copy()
-        base_pose = np.array(data_handler.getBaseFramePose().translation).copy()
-        foot_pose = np.array(data_handler.getFootPose(foot_nb).translation).copy()
-
+    def computeFootLandingPose(
+        self,
+        foot_ref_position: np.ndarray,
+        base_position: np.ndarray,
+        foot_position: np.ndarray,
+        velocity_base: np.ndarray,
+    ) -> np.ndarray:
         twist_vect = np.zeros(2)
-        twist_vect[0] = -(foot_ref[1] - base_pose[1])
-        twist_vect[1] = foot_ref[0] - base_pose[0]
+        twist_vect[0] = -(foot_ref_position[1] - base_position[1])
+        twist_vect[1] = foot_ref_position[0] - base_position[0]
 
         next_pose = np.zeros(3)
-        next_pose[:2] = foot_ref[:2]
+        next_pose[:2] = foot_ref_position[:2]
         next_pose[:2] += (np.asarray(velocity_base[:2], dtype=float) + velocity_base[5] * twist_vect) * (
             self.T_fly_ + self.T_contact_
         ) * self.timestep_
-        next_pose[2] = foot_pose[2]
+        next_pose[2] = foot_position[2]
         return next_pose
 
     def extractPhaseTimings(self, horizon_contact_states, foot_nb: int, in_contact: bool):
@@ -97,10 +99,11 @@ class FootPlanner:
     def updateCommittedLandPositions(
         self,
         ee_name: str,
-        foot_nb: int,
         in_contact: bool,
         land_times: list[int],
-        data_handler,
+        foot_ref_position: np.ndarray,
+        base_position: np.ndarray,
+        foot_position: np.ndarray,
         velocity_base: np.ndarray,
     ) -> None:
         committed_land_positions = self.foot_land_positions_[ee_name]
@@ -117,22 +120,26 @@ class FootPlanner:
             )
             if should_commit_next:
                 committed_land_positions.append(
-                    self.computeFootLandingPose(foot_nb, data_handler, velocity_base).copy()
+                    self.computeFootLandingPose(
+                        foot_ref_position,
+                        base_position,
+                        foot_position,
+                        velocity_base,
+                    )
                 )
                 should_commit_next = len(committed_land_positions) < len(land_times)
 
     def updateSwingTrajectory(
         self,
         ee_name: str,
-        foot_nb: int,
         in_contact: bool,
         land_positions: list[np.ndarray],
-        data_handler,
+        current_pose: np.ndarray,
     ) -> None:
-        current_pose = np.array(data_handler.getFootPose(foot_nb).translation).copy()
+        current_pose = np.array(current_pose, dtype=float)
         if land_positions and (in_contact or self.previous_in_contact_[ee_name]):
             self.initial_poses_[ee_name] = current_pose
-            self.final_poses_[ee_name] = np.asarray(land_positions[0], dtype=float).copy()
+            self.final_poses_[ee_name] = np.array(land_positions[0], dtype=float)
             self.swing_trajectories_[ee_name] = self.defineTranslationBezier(
                 self.initial_poses_[ee_name],
                 self.final_poses_[ee_name],
@@ -141,24 +148,24 @@ class FootPlanner:
 
         if in_contact:
             self.initial_poses_[ee_name] = current_pose
-            self.final_poses_[ee_name] = current_pose.copy()
+            self.final_poses_[ee_name] = current_pose
             self.swing_trajectories_[ee_name] = self.defineTranslationBezier(
                 self.initial_poses_[ee_name],
                 self.final_poses_[ee_name],
             )
 
     def defineTranslationBezier(self, trans_init: np.ndarray, trans_final: np.ndarray):
-        trans_init = np.asarray(trans_init, dtype=float).copy()
-        trans_final = np.asarray(trans_final, dtype=float).copy()
+        trans_init = np.array(trans_init, dtype=float)
+        trans_final = np.array(trans_final, dtype=float)
 
         points = []
         for _ in range(4):
-            points.append(trans_init.copy())
+            points.append(trans_init)
         midpoint = trans_init * 3.0 / 4.0 + trans_final * 1.0 / 4.0
         midpoint[2] += self.swing_apex_
-        points.append(midpoint.copy())
+        points.append(midpoint)
         for _ in range(5, 9):
-            points.append(trans_final.copy())
+            points.append(trans_final)
 
         control_points = np.column_stack(points)
         bezier_curve = ndcurves.bezier(control_points, 0.0, 1.0)
@@ -178,9 +185,9 @@ class FootPlanner:
         if len(land_times) != len(land_poses):
             raise RuntimeError("land_times size does not match land_poses size")
 
-        current_trans = np.asarray(current_trans, dtype=float).copy()
-        trajectory = [current_trans.copy() for _ in range(self.T_)]
-        stance_pose = current_trans.copy()
+        current_trans = np.array(current_trans, dtype=float)
+        trajectory = [None] * self.T_
+        stance_pose = current_trans
         takeoff_id = 0
         land_id = 0
         swing_start_time = 0
@@ -192,10 +199,10 @@ class FootPlanner:
 
         for t in range(self.T_):
             time = int(t)
-            sample = stance_pose.copy()
+            sample = stance_pose
 
             while land_id < len(land_times) and land_times[land_id] < time:
-                stance_pose = np.asarray(land_poses[land_id], dtype=float).copy()
+                stance_pose = np.array(land_poses[land_id], dtype=float)
                 in_contact = True
                 land_id += 1
 
@@ -204,32 +211,33 @@ class FootPlanner:
                 if takeoff_now:
                     swing_start_time = int(takeoff_times[takeoff_id])
                     in_contact = False
-                    target_pose = (
-                        np.asarray(land_poses[land_id], dtype=float).copy() if land_id < len(land_poses) else stance_pose
-                    )
+                    if land_id < len(land_poses):
+                        target_pose = np.array(land_poses[land_id], dtype=float)
+                    else:
+                        target_pose = stance_pose
                     swing_trajectory = self.defineTranslationBezier(stance_pose, target_pose)
                     takeoff_id += 1
 
             if in_contact or land_id >= len(land_times):
-                sample = stance_pose.copy()
+                sample = stance_pose
             else:
                 landing_time = int(land_times[land_id])
-                landing_pose = np.asarray(land_poses[land_id], dtype=float).copy()
+                landing_pose = np.array(land_poses[land_id], dtype=float)
                 if time >= landing_time:
-                    stance_pose = landing_pose.copy()
+                    stance_pose = landing_pose
                     in_contact = True
                     land_id += 1
-                    sample = stance_pose.copy()
+                    sample = stance_pose
                 else:
                     swing_duration = landing_time - swing_start_time
                     if swing_duration <= 0:
-                        sample = landing_pose.copy()
+                        sample = landing_pose
                     else:
                         u = float(time - swing_start_time) / float(swing_duration)
                         u = min(max(u, 0.0), 1.0)
-                        sample = np.asarray(swing_trajectory(u), dtype=float).copy()
+                        sample = np.array(swing_trajectory(u), dtype=float)
 
-            trajectory[t] = np.asarray(sample, dtype=float).copy()
+            trajectory[t] = np.array(sample, dtype=float, copy=True)
 
         return trajectory
 
@@ -239,7 +247,9 @@ class FootPlanner:
         foot_nb: int,
         horizon_contact_states,
         future_land_times: list[int],
-        data_handler,
+        foot_ref_position: np.ndarray,
+        base_position: np.ndarray,
+        foot_position: np.ndarray,
         velocity_base: np.ndarray,
     ) -> None:
         in_contact = bool(horizon_contact_states[0][foot_nb])
@@ -247,21 +257,29 @@ class FootPlanner:
         self.appendPreviewLandTimes(in_contact, future_land_times, takeoff_times, land_times)
         self.updateCommittedLandPositions(
             ee_name,
-            foot_nb,
             in_contact,
             land_times,
-            data_handler,
+            foot_ref_position,
+            base_position,
+            foot_position,
             np.asarray(velocity_base, dtype=float),
         )
 
-        land_positions = [np.asarray(position, dtype=float).copy() for position in self.foot_land_positions_[ee_name]]
+        land_positions = list(self.foot_land_positions_[ee_name])
         for _ in range(len(land_positions), len(land_times)):
-            land_positions.append(self.computeFootLandingPose(foot_nb, data_handler, velocity_base))
+            land_positions.append(
+                self.computeFootLandingPose(
+                    foot_ref_position,
+                    base_position,
+                    foot_position,
+                    velocity_base,
+                )
+            )
 
-        self.updateSwingTrajectory(ee_name, foot_nb, in_contact, land_positions, data_handler)
+        self.updateSwingTrajectory(ee_name, in_contact, land_positions, foot_position)
         self.references_[ee_name] = self.createTrajectory(
             ee_name,
-            np.array(data_handler.getFootPose(foot_nb).translation).copy(),
+            foot_position,
             in_contact,
             takeoff_times,
             land_times,

@@ -8,7 +8,7 @@ import aligator.constraints as constraints
 import aligator.dynamics as dynamics
 import aligator.manifolds as manifolds
 
-from .robot_handler import RobotDataHandler, RobotModelHandler
+from .robot_handler import RobotModelHandler
 
 
 FORCE_SIZE = 3
@@ -116,7 +116,7 @@ class QuadKinodynOcp:
                 space.ndx,
                 self.nu_,
                 self.model_handler_.getModel(),
-                np.array(contact_pose[name].translation).copy(),
+                np.array(contact_pose[name].translation),
                 frame_id,
             )
             rcost.addCost(
@@ -174,7 +174,7 @@ class QuadKinodynOcp:
                         space.ndx,
                         self.nu_,
                         self.model_handler_.getModel(),
-                        np.array(contact_pose[name].translation).copy(),
+                        np.array(contact_pose[name].translation),
                         self.model_handler_.getFootFrameId(foot_nb),
                     )
                     frame_slice = aligator.StageFunctionSliceXpr(frame_residual, [2])
@@ -282,12 +282,12 @@ class QuadKinodynOcp:
 
         contact_phase = {name: True for name in self._foot_names()}
         contact_pose = self._identity_pose_map()
-        contact_force = {name: force_ref.copy() for name in self._foot_names()}
+        contact_force = {name: force_ref for name in self._foot_names()}
 
         for _ in range(self.size_):
             contact_phases.append(dict(contact_phase))
             contact_poses.append({name: pin.SE3(pose) for name, pose in contact_pose.items()})
-            contact_forces.append({name: force.copy() for name, force in contact_force.items()})
+            contact_forces.append(dict(contact_force))
 
         stage_models = self.createStages(contact_phases, contact_poses, contact_forces)
         self.problem_ = aligator.TrajOptProblem(x0, stage_models, self.createTerminalCost())
@@ -311,7 +311,7 @@ class QuadKinodynOcp:
 
     def setReferencePose(self, t: int, ee_name: str, pose_ref: pin.SE3) -> None:
         qrc = self._get_cost_stack(t).getComponent(f"{ee_name}_pose_cost")
-        qrc.residual.setReference(np.array(pose_ref.translation).copy())
+        qrc.residual.setReference(np.array(pose_ref.translation))
 
     def getReferenceForce(self, t: int, ee_name: str) -> np.ndarray:
         foot_id = self.model_handler_.getFootNb(ee_name)
@@ -331,9 +331,6 @@ class QuadKinodynOcp:
         x_ref = self.getReferenceState(t)
         x_ref[self.nq_ : self.nq_ + 6] = velocity_base
         self.setReferenceState(t, x_ref)
-
-    def getProblemState(self, data_handler: RobotDataHandler) -> np.ndarray:
-        return data_handler.getState()
 
     def setReferenceState(self, t: int, x_ref: np.ndarray) -> None:
         x_ref = np.asarray(x_ref, dtype=float)

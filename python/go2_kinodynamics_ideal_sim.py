@@ -161,9 +161,9 @@ def build_mpc(problem, model_handler, gravity):
 
 
 def rollout_ideal_mpc(mpc, x0, nq, visualizer):
-    x_current = x0.copy()
-    q_traj = [x_current[:nq].copy()]
-    x_traj = [x_current.copy()]
+    x_current = np.array(x0)
+    q_traj = [np.array(x_current[:nq])]
+    x_traj = [x_current]
     u_traj = []
     solve_times = []
     horizon_history = []
@@ -174,11 +174,11 @@ def rollout_ideal_mpc(mpc, x0, nq, visualizer):
         solve_times.append(time.perf_counter() - start)
 
         horizon_history.append(visualizer.capture_horizon(mpc))
-        u_traj.append(np.array(mpc.us[0]).copy())
+        u_traj.append(np.array(mpc.us[0]))
 
-        x_current = np.array(mpc.xs[1]).copy()
-        x_traj.append(x_current.copy())
-        q_traj.append(x_current[:nq].copy())
+        x_current = np.array(mpc.xs[1])
+        x_traj.append(x_current)
+        q_traj.append(np.array(x_current[:nq]))
 
         if step % 25 == 0:
             print(
@@ -212,7 +212,7 @@ def main():
     mpc = build_mpc(problem, model_handler, gravity)
     visualizer = MPCMeshcatVisualizer(robot, model_handler, FOOT_NAMES, DT_MPC)
 
-    x0 = np.array(model_handler.getReferenceState()).copy()
+    x0 = np.array(model_handler.getReferenceState())
     rollout = rollout_ideal_mpc(mpc, x0, model_handler.getModel().nq, visualizer)
 
     print(
