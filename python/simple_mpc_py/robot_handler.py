@@ -1,32 +1,19 @@
 from __future__ import annotations
 
-import copy
-
 import numpy as np
 import pinocchio as pin
 
 
-def _copy_model(model: pin.Model) -> pin.Model:
-    if hasattr(model, "copy"):
-        return model.copy()
-    return copy.deepcopy(model)
-
-
 class RobotModelHandler:
-    POINT = "point"
-    QUAD = "quad"
-
     def __init__(self, model: pin.Model, reference_configuration_name: str, base_frame_name: str):
-        self._model = _copy_model(model)
+        self._model = model.copy()
         self._base_frame_id = self._model.getFrameId(base_frame_name)
         qref = np.array(self._model.referenceConfigurations[reference_configuration_name]).copy()
         self._reference_state = np.concatenate((qref, np.zeros(self._model.nv)))
         self._mass = float(pin.computeTotalMass(self._model))
         self._feet_frame_names: list[str] = []
-        self._feet_types: list[str] = []
         self._feet_frame_ids: list[int] = []
         self._feet_ref_frame_ids: list[int] = []
-        self._feet_contact_points: dict[int, np.ndarray] = {}
 
     def _add_foot_frames(self, foot_name: str, reference_parent_frame_name: str) -> int:
         foot_nb = self.getFeetNb()
@@ -55,33 +42,10 @@ class RobotModelHandler:
         return foot_nb
 
     def addPointFoot(self, foot_name: str, reference_parent_frame_name: str) -> int:
-        foot_nb = self._add_foot_frames(foot_name, reference_parent_frame_name)
-        self._feet_types.append(self.POINT)
-        return foot_nb
-
-    def addQuadFoot(
-        self,
-        foot_name: str,
-        reference_parent_frame_name: str,
-        contact_points: np.ndarray,
-    ) -> int:
-        foot_nb = self._add_foot_frames(foot_name, reference_parent_frame_name)
-        self._feet_types.append(self.QUAD)
-        self._feet_contact_points[foot_nb] = np.array(contact_points, dtype=float).copy()
-        return foot_nb
+        return self._add_foot_frames(foot_name, reference_parent_frame_name)
 
     def setFootReferencePlacement(self, foot_nb: int, parentframeMfootref: pin.SE3) -> None:
         self._model.frames[self._feet_ref_frame_ids[foot_nb]].placement = parentframeMfootref
-
-    def difference(self, x1: np.ndarray, x2: np.ndarray) -> np.ndarray:
-        x1 = np.asarray(x1)
-        x2 = np.asarray(x2)
-        nq = self._model.nq
-        nv = self._model.nv
-        dx = np.zeros(2 * nv)
-        dx[:nv] = pin.difference(self._model, x1[:nq], x2[:nq])
-        dx[nv:] = x2[nq:] - x1[nq:]
-        return dx
 
     def getReferenceState(self) -> np.ndarray:
         return self._reference_state
@@ -95,12 +59,6 @@ class RobotModelHandler:
     def getFootNb(self, foot_frame_name: str) -> int:
         return self._feet_frame_names.index(foot_frame_name)
 
-    def getFootType(self, foot_nb: int) -> str:
-        return self._feet_types[foot_nb]
-
-    def getQuadFootContactPoints(self, foot_nb: int) -> np.ndarray:
-        return self._feet_contact_points[foot_nb]
-
     def getFeetFrameIds(self) -> list[int]:
         return list(self._feet_frame_ids)
 
@@ -109,9 +67,6 @@ class RobotModelHandler:
 
     def getBaseFrameId(self) -> int:
         return self._base_frame_id
-
-    def getBaseFrameName(self) -> str:
-        return self._model.frames[self._base_frame_id].name
 
     def getFootFrameId(self, foot_nb: int) -> int:
         return self._feet_frame_ids[foot_nb]
@@ -172,18 +127,8 @@ class RobotDataHandler:
     def getBaseFramePose(self) -> pin.SE3:
         return self._data.oMf[self._model_handler.getBaseFrameId()]
 
-    def getModelHandler(self) -> RobotModelHandler:
-        return self._model_handler
-
     def getData(self):
         return self._data
 
     def getState(self) -> np.ndarray:
         return self._x.copy()
-
-    def getCentroidalState(self) -> np.ndarray:
-        x_centroidal = np.zeros(9)
-        x_centroidal[:3] = np.array(self._data.com[0]).copy()
-        x_centroidal[3:6] = np.array(self._data.hg.linear).copy()
-        x_centroidal[6:9] = np.array(self._data.hg.angular).copy()
-        return x_centroidal

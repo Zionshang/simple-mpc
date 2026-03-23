@@ -33,9 +33,6 @@ class KinodynamicsOCP:
     def _foot_names(self) -> list[str]:
         return self.model_handler_.getFeetFrameNames()
 
-    def _foot_ids(self) -> list[int]:
-        return self.model_handler_.getFeetFrameIds()
-
     def _identity_pose_map(self) -> dict[str, pin.SE3]:
         return {name: pin.SE3.Identity() for name in self._foot_names()}
 
@@ -45,11 +42,6 @@ class KinodynamicsOCP:
         if t < 0 or t >= self.getSize():
             raise RuntimeError("Stage index exceeds stage vector size")
         return self.problem_.stages[t].cost
-
-    def _get_terminal_cost_stack(self):
-        if self.problem_ is None:
-            raise RuntimeError("Create problem first!")
-        return self.problem_.term_cost
 
     def _get_stage_dynamics(self, t: int):
         if self.problem_ is None:
@@ -335,9 +327,6 @@ class KinodynamicsOCP:
         if terminal_constraint:
             self.createTerminalConstraint(self.x0_[:3])
 
-    def getSettings(self) -> dict:
-        return dict(self.settings_)
-
     def getProblem(self):
         if self.problem_ is None:
             raise RuntimeError("Create problem first!")
@@ -357,31 +346,6 @@ class KinodynamicsOCP:
         else:
             residual.setReference(np.array(pose_ref.translation).copy())
 
-    def setReferencePoses(self, t: int, pose_refs: dict[str, pin.SE3]) -> None:
-        if len(pose_refs) != self.model_handler_.getFeetNb():
-            raise RuntimeError("pose_refs size does not match number of end effectors")
-        for ee_name in self._foot_names():
-            self.setReferencePose(t, ee_name, pose_refs[ee_name])
-
-    def setTerminalReferencePose(self, ee_name: str, pose_ref: pin.SE3) -> None:
-        qrc = self._get_terminal_cost_stack().getComponent(f"{ee_name}_pose_cost")
-        residual = qrc.residual
-        if self.force_size_ == 6:
-            residual.setReference(pose_ref)
-        else:
-            residual.setReference(np.array(pose_ref.translation).copy())
-
-    def setReferenceForces(self, t: int, force_refs: dict[str, np.ndarray]) -> None:
-        self.computeControlFromForces(force_refs)
-        self.setReferenceControl(t, self.control_ref_)
-
-    def setReferenceForce(self, t: int, ee_name: str, force_ref: np.ndarray) -> None:
-        foot_id = self.model_handler_.getFootNb(ee_name)
-        control_ref = self.getReferenceControl(t)
-        start = foot_id * self.force_size_
-        control_ref[start : start + self.force_size_] = np.asarray(force_ref, dtype=float)
-        self.setReferenceControl(t, control_ref)
-
     def getReferenceForce(self, t: int, ee_name: str) -> np.ndarray:
         foot_id = self.model_handler_.getFootNb(ee_name)
         start = foot_id * self.force_size_
@@ -396,26 +360,12 @@ class KinodynamicsOCP:
         pose_ref.translation = np.asarray(residual.getReference(), dtype=float)
         return pose_ref
 
-    def getVelocityBase(self, t: int) -> np.ndarray:
-        return self.getReferenceState(t)[self.nq_ : self.nq_ + 6].copy()
-
     def setVelocityBase(self, t: int, velocity_base: np.ndarray) -> None:
         velocity_base = np.asarray(velocity_base, dtype=float)
         if velocity_base.shape[0] != 6:
             raise RuntimeError("velocity_base size should be 6")
         x_ref = self.getReferenceState(t)
         x_ref[self.nq_ : self.nq_ + 6] = velocity_base
-        self.setReferenceState(t, x_ref)
-
-    def getPoseBase(self, t: int) -> np.ndarray:
-        return self.getReferenceState(t)[:7].copy()
-
-    def setPoseBase(self, t: int, pose_base: np.ndarray) -> None:
-        pose_base = np.asarray(pose_base, dtype=float)
-        if pose_base.shape[0] != 7:
-            raise RuntimeError("pose_base size should be 7")
-        x_ref = self.getReferenceState(t)
-        x_ref[:7] = pose_base
         self.setReferenceState(t, x_ref)
 
     def getProblemState(self, data_handler: RobotDataHandler) -> np.ndarray:
@@ -431,10 +381,6 @@ class KinodynamicsOCP:
     def getReferenceState(self, t: int) -> np.ndarray:
         qc = self._get_cost_stack(t).getComponent("state_cost")
         return np.asarray(qc.target, dtype=float).copy()
-
-    def setReferenceControl(self, t: int, u_ref: np.ndarray) -> None:
-        qc = self._get_cost_stack(t).getComponent("control_cost")
-        qc.target = np.asarray(u_ref, dtype=float).copy()
 
     def getReferenceControl(self, t: int) -> np.ndarray:
         qc = self._get_cost_stack(t).getComponent("control_cost")

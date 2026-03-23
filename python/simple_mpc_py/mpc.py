@@ -63,13 +63,11 @@ class MPC:
             100,
             aligator.QUIET,
         )
-        if hasattr(aligator, "ROLLOUT_LINEAR"):
-            self.solver_.rollout_type = aligator.ROLLOUT_LINEAR
+        self.solver_.rollout_type = aligator.ROLLOUT_LINEAR
         if self.settings_.num_threads > 1:
-            if hasattr(aligator, "LQ_SOLVER_PARALLEL"):
-                self.solver_.linear_solver_choice = aligator.LQ_SOLVER_PARALLEL
+            self.solver_.linear_solver_choice = aligator.LQ_SOLVER_PARALLEL
             self.solver_.setNumThreads(self.settings_.num_threads)
-        elif hasattr(aligator, "LQ_SOLVER_SERIAL"):
+        else:
             self.solver_.linear_solver_choice = aligator.LQ_SOLVER_SERIAL
         self.solver_.force_initial_condition = True
 
@@ -88,7 +86,6 @@ class MPC:
 
         self.xs_ = []
         self.us_ = []
-        self.Ks_ = []
         self.standing_horizon_ = []
         self.standing_horizon_data_ = []
         self.cycle_horizon_ = []
@@ -110,7 +107,6 @@ class MPC:
 
         self.xs_ = [np.array(x).copy() for x in self.solver_.results.xs]
         self.us_ = [np.array(u).copy() for u in self.solver_.results.us]
-        self.Ks_ = [np.array(k).copy() for k in self.solver_.results.controlFeedbacks()]
 
         self.solver_.max_iters = self.settings_.max_iters
 
@@ -127,14 +123,6 @@ class MPC:
         self.velocity_base_ = np.asarray(value, dtype=float).copy()
 
     @property
-    def x_reference(self):
-        return self.x_reference_
-
-    @x_reference.setter
-    def x_reference(self, value):
-        self.x_reference_ = np.asarray(value, dtype=float).copy()
-
-    @property
     def ocp_handler(self):
         return self.ocp_handler_
 
@@ -145,10 +133,6 @@ class MPC:
     @property
     def us(self):
         return [u.copy() for u in self.us_]
-
-    @property
-    def Ks(self):
-        return [k.copy() for k in self.Ks_]
 
     def _rotate_left(self, values):
         if values:
@@ -196,7 +180,8 @@ class MPC:
             contact_poses = {}
             force_map = {}
             for name in self.ee_names_:
-                contact_poses[name] = self.data_handler_.getFootPose(self.ocp_handler_.getModelHandler().getFootNb(name))
+                foot_nb = self.ocp_handler_.getModelHandler().getFootNb(name)
+                contact_poses[name] = self.data_handler_.getFootPose(foot_nb)
                 force_map[name] = force_ref.copy() if state[name] else force_zero.copy()
 
             land_contacts = {}
@@ -208,17 +193,17 @@ class MPC:
             self.cycle_horizon_data_.append(stage.createData())
             previous_contacts = dict(state)
 
-    def updateCycleTiming(self, updateOnlyHorizon: bool) -> None:
+    def updateCycleTiming(self, update_only_horizon: bool) -> None:
         horizon = self.ocp_handler_.getSize()
         for name in self.ee_names_:
             for i in range(len(self.foot_land_times_[name])):
-                if (not updateOnlyHorizon) or self.foot_land_times_[name][i] < horizon:
+                if (not update_only_horizon) or self.foot_land_times_[name][i] < horizon:
                     self.foot_land_times_[name][i] -= 1
             while self.foot_land_times_[name] and self.foot_land_times_[name][0] < 0:
                 self.foot_land_times_[name].pop(0)
 
             for i in range(len(self.foot_takeoff_times_[name])):
-                if (not updateOnlyHorizon) or self.foot_takeoff_times_[name][i] < horizon:
+                if (not update_only_horizon) or self.foot_takeoff_times_[name][i] < horizon:
                     self.foot_takeoff_times_[name][i] -= 1
             while self.foot_takeoff_times_[name] and self.foot_takeoff_times_[name][0] < 0:
                 self.foot_takeoff_times_[name].pop(0)
@@ -254,21 +239,12 @@ class MPC:
             pose = pin.SE3.Identity()
             for time in range(self.ocp_handler_.getSize()):
                 pose.translation = self.foot_planner_.getReference(name)[time]
-                self.setReferencePose(time, name, pose)
+                self.ocp_handler_.setReferencePose(time, name, pose)
 
         self.updateTerminalReferences()
 
-    def setReferencePose(self, t: int, ee_name: str, pose_ref: pin.SE3) -> None:
-        self.ocp_handler_.setReferencePose(t, ee_name, pose_ref)
-
-    def setTerminalReferencePose(self, ee_name: str, pose_ref: pin.SE3) -> None:
-        self.ocp_handler_.setTerminalReferencePose(ee_name, pose_ref)
-
     def getReferencePose(self, t: int, ee_name: str) -> pin.SE3:
         return self.ocp_handler_.getReferencePose(t, ee_name)
-
-    def getTrajOptProblem(self):
-        return self.ocp_handler_.getProblem()
 
     def recedeWithCycle(self) -> None:
         problem = self.ocp_handler_.getProblem()
@@ -319,41 +295,3 @@ class MPC:
 
         self.xs_ = [np.array(xi).copy() for xi in self.solver_.results.xs]
         self.us_ = [np.array(ui).copy() for ui in self.solver_.results.us]
-        self.Ks_ = [np.array(k).copy() for k in self.solver_.results.controlFeedbacks()]
-
-    def getFootTakeoffCycle(self, ee_name: str) -> int:
-        return self.foot_takeoff_times_[ee_name][0] if self.foot_takeoff_times_[ee_name] else -1
-
-    def getFootLandCycle(self, ee_name: str) -> int:
-        return self.foot_land_times_[ee_name][0] if self.foot_land_times_[ee_name] else -1
-
-    def getStateDerivative(self, t: int) -> np.ndarray:
-        stage_data = self.solver_.workspace.problem_data.stage_data[t]
-        return np.array(stage_data.dynamics_data.continuous_data.xdot).copy()
-
-    def getContactForces(self, t: int) -> np.ndarray:
-        force_size = self.ocp_handler_.force_size_
-        contact_forces = np.zeros((len(self.ee_names_), force_size))
-        contact_state = self.ocp_handler_.getContactState(t)
-        for i, active in enumerate(contact_state):
-            if active:
-                start = i * force_size
-                contact_forces[i] = self.us_[t][start : start + force_size]
-        return contact_forces
-
-    def getCyclingContactState(self, t: int, ee_name: str) -> bool:
-        return self.contact_states_[t][ee_name]
-
-    def getModelHandler(self):
-        return self.ocp_handler_.getModelHandler()
-
-    def getDataHandler(self):
-        return self.data_handler_
-
-    def switchToWalk(self, velocity_base: np.ndarray) -> None:
-        self.now_ = self.WALKING
-        self.velocity_base_ = np.asarray(velocity_base, dtype=float).copy()
-
-    def switchToStand(self) -> None:
-        self.now_ = self.STANDING
-        self.velocity_base_ = np.zeros(6)
