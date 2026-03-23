@@ -11,7 +11,10 @@ import aligator.manifolds as manifolds
 from .robot_handler import RobotDataHandler, RobotModelHandler
 
 
-class KinodynamicsOCP:
+FORCE_SIZE = 3
+
+
+class QuadKinodynOcp:
     def __init__(self, settings: dict, model_handler: RobotModelHandler):
         self.settings_ = dict(settings)
         self.model_handler_ = model_handler
@@ -20,9 +23,7 @@ class KinodynamicsOCP:
         self.nq_ = self.model_.nq
         self.nv_ = self.model_.nv
         self.ndx_ = self.space_.ndx
-        self.force_size_ = int(self.settings_["force_size"])
-        self.nu_ = self.nv_ - 6 + self.force_size_ * self.model_handler_.getFeetNb()
-        self.x0_ = np.asarray(self.model_handler_.getReferenceState(), dtype=float).copy()
+        self.nu_ = self.nv_ - 6 + FORCE_SIZE * self.model_handler_.getFeetNb()
         self.control_ref_ = np.zeros(self.nu_)
         self.size_ = 0
         self.problem_: aligator.TrajOptProblem | None = None
@@ -51,10 +52,10 @@ class KinodynamicsOCP:
     def computeControlFromForces(self, force_refs: dict[str, np.ndarray]) -> None:
         for foot_nb, name in enumerate(self._foot_names()):
             force_ref = np.asarray(force_refs[name], dtype=float)
-            if force_ref.shape[0] != self.force_size_:
-                raise RuntimeError("force size in settings does not match reference force size")
-            start = foot_nb * self.force_size_
-            self.control_ref_[start : start + self.force_size_] = force_ref
+            if force_ref.shape[0] != FORCE_SIZE:
+                raise RuntimeError("force size does not match 3D point-foot model")
+            start = foot_nb * FORCE_SIZE
+            self.control_ref_[start : start + FORCE_SIZE] = force_ref
 
     def createStage(
         self,
@@ -102,7 +103,7 @@ class KinodynamicsOCP:
                 np.asarray(self.settings_["gravity"], dtype=float),
                 contact_states,
                 self.model_handler_.getFeetFrameIds(),
-                self.force_size_,
+                FORCE_SIZE,
             )
             rcost.addCost(
                 "centroidal_derivative_cost",
@@ -111,22 +112,13 @@ class KinodynamicsOCP:
 
         for foot_nb, name in enumerate(self._foot_names()):
             frame_id = self.model_handler_.getFootFrameId(foot_nb)
-            if self.force_size_ == 6:
-                frame_residual = aligator.FramePlacementResidual(
-                    space.ndx,
-                    self.nu_,
-                    self.model_handler_.getModel(),
-                    contact_pose[name],
-                    frame_id,
-                )
-            else:
-                frame_residual = aligator.FrameTranslationResidual(
-                    space.ndx,
-                    self.nu_,
-                    self.model_handler_.getModel(),
-                    np.array(contact_pose[name].translation).copy(),
-                    frame_id,
-                )
+            frame_residual = aligator.FrameTranslationResidual(
+                space.ndx,
+                self.nu_,
+                self.model_handler_.getModel(),
+                np.array(contact_pose[name].translation).copy(),
+                frame_id,
+            )
             rcost.addCost(
                 f"{name}_pose_cost",
                 aligator.QuadraticResidualCost(space, frame_residual, self.settings_["w_frame"]),
@@ -138,7 +130,7 @@ class KinodynamicsOCP:
             np.asarray(self.settings_["gravity"], dtype=float),
             contact_states,
             self.model_handler_.getFeetFrameIds(),
-            self.force_size_,
+            FORCE_SIZE,
         )
         dyn_model = dynamics.IntegratorSemiImplEuler(ode, float(self.settings_["timestep"]))
         stage = aligator.StageModel(rcost, dyn_model)
@@ -157,39 +149,23 @@ class KinodynamicsOCP:
 
         v_ref = pin.Motion.Zero()
         for foot_nb, name in enumerate(self._foot_names()):
-            if not contact_phase[name]:
-                continue
-
-            frame_vel = aligator.FrameVelocityResidual(
-                space.ndx,
-                self.nu_,
-                self.model_handler_.getModel(),
-                v_ref,
-                self.model_handler_.getFootFrameId(foot_nb),
-                pin.LOCAL,
-            )
-            if self.force_size_ == 6:
-                if self.settings_.get("force_cone", False):
-                    wrench_residual = aligator.CentroidalWrenchConeResidual(
-                        space.ndx,
-                        self.nu_,
-                        foot_nb,
-                        self.settings_["mu"],
-                        self.settings_["Lfoot"],
-                        self.settings_["Wfoot"],
-                    )
-                    stage.addConstraint(wrench_residual, constraints.NegativeOrthant())
-                stage.addConstraint(frame_vel, constraints.EqualityConstraintSet())
-            else:
-                if self.settings_.get("force_cone", False):
-                    friction_residual = aligator.CentroidalFrictionConeResidual(
-                        space.ndx,
-                        self.nu_,
-                        foot_nb,
-                        self.settings_["mu"],
-                        1e-4,
-                    )
-                    stage.addConstraint(friction_residual, constraints.NegativeOrthant())
+            if contact_phase[name]:
+                frame_vel = aligator.FrameVelocityResidual(
+                    space.ndx,
+                    self.nu_,
+                    self.model_handler_.getModel(),
+                    v_ref,
+                    self.model_handler_.getFootFrameId(foot_nb),
+                    pin.LOCAL,
+                )
+                friction_residual = aligator.CentroidalFrictionConeResidual(
+                    space.ndx,
+                    self.nu_,
+                    foot_nb,
+                    self.settings_["mu"],
+                    1e-4,
+                )
+                stage.addConstraint(friction_residual, constraints.NegativeOrthant())
                 vel_slice = aligator.StageFunctionSliceXpr(frame_vel, [0, 1, 2])
                 stage.addConstraint(vel_slice, constraints.EqualityConstraintSet())
 
@@ -292,21 +268,16 @@ class KinodynamicsOCP:
         self,
         x0: np.ndarray,
         horizon: int,
-        force_size: int,
         gravity: float,
         terminal_constraint: bool,
     ) -> None:
-        if int(force_size) != self.force_size_:
-            raise ValueError("force_size does not match settings['force_size']")
-
-        self.x0_ = np.asarray(x0, dtype=float).copy()
         self.size_ = int(horizon)
 
         contact_phases = []
         contact_poses = []
         contact_forces = []
 
-        force_ref = np.zeros(self.force_size_)
+        force_ref = np.zeros(FORCE_SIZE)
         force_ref[2] = -self.model_handler_.getMass() * float(gravity) / float(self.model_handler_.getFeetNb())
 
         contact_phase = {name: True for name in self._foot_names()}
@@ -319,13 +290,13 @@ class KinodynamicsOCP:
             contact_forces.append({name: force.copy() for name, force in contact_force.items()})
 
         stage_models = self.createStages(contact_phases, contact_poses, contact_forces)
-        self.problem_ = aligator.TrajOptProblem(self.x0_, stage_models, self.createTerminalCost())
+        self.problem_ = aligator.TrajOptProblem(x0, stage_models, self.createTerminalCost())
         self.problem_initialized_ = True
         self.terminal_constraint_ = False
         self.terminal_dcm_residual_ = None
 
         if terminal_constraint:
-            self.createTerminalConstraint(self.x0_[:3])
+            self.createTerminalConstraint(x0[:3])
 
     def getProblem(self):
         if self.problem_ is None:
@@ -340,24 +311,17 @@ class KinodynamicsOCP:
 
     def setReferencePose(self, t: int, ee_name: str, pose_ref: pin.SE3) -> None:
         qrc = self._get_cost_stack(t).getComponent(f"{ee_name}_pose_cost")
-        residual = qrc.residual
-        if self.force_size_ == 6:
-            residual.setReference(pose_ref)
-        else:
-            residual.setReference(np.array(pose_ref.translation).copy())
+        qrc.residual.setReference(np.array(pose_ref.translation).copy())
 
     def getReferenceForce(self, t: int, ee_name: str) -> np.ndarray:
         foot_id = self.model_handler_.getFootNb(ee_name)
-        start = foot_id * self.force_size_
-        return self.getReferenceControl(t)[start : start + self.force_size_].copy()
+        start = foot_id * FORCE_SIZE
+        return self.getReferenceControl(t)[start : start + FORCE_SIZE].copy()
 
     def getReferencePose(self, t: int, ee_name: str) -> pin.SE3:
         qrc = self._get_cost_stack(t).getComponent(f"{ee_name}_pose_cost")
-        residual = qrc.residual
-        if self.force_size_ == 6:
-            return pin.SE3(residual.getReference())
         pose_ref = pin.SE3.Identity()
-        pose_ref.translation = np.asarray(residual.getReference(), dtype=float)
+        pose_ref.translation = np.asarray(qrc.residual.getReference(), dtype=float)
         return pose_ref
 
     def setVelocityBase(self, t: int, velocity_base: np.ndarray) -> None:
@@ -375,8 +339,7 @@ class KinodynamicsOCP:
         x_ref = np.asarray(x_ref, dtype=float)
         if x_ref.shape[0] != self.nq_ + self.nv_:
             raise AssertionError("x_ref not of the right size")
-        qc = self._get_cost_stack(t).getComponent("state_cost")
-        qc.target = x_ref.copy()
+        self._get_cost_stack(t).getComponent("state_cost").target = x_ref.copy()
 
     def getReferenceState(self, t: int) -> np.ndarray:
         qc = self._get_cost_stack(t).getComponent("state_cost")

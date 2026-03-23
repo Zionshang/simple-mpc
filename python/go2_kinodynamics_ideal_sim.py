@@ -9,7 +9,7 @@ import tty
 import example_robot_data as erd
 import numpy as np
 
-from simple_mpc_py import KinodynamicsOCP, MPC, MPCMeshcatVisualizer, RobotModelHandler
+from simple_mpc_py import MPC, MPCMeshcatVisualizer, RobotModelHandler, QuadKinodynOcp
 
 
 BASE_JOINT_NAME = "root_joint"
@@ -64,8 +64,6 @@ def build_model_handler():
 def build_kinodynamics_problem(model_handler):
     gravity = np.array([0.0, 0.0, -9.81])
     nv = model_handler.getModel().nv
-    force_size = 3
-
     w_basepos = [0, 0, 100, 10, 10, 0]
     w_legpos = [1, 1, 1]
     w_basevel = [10, 10, 100, 10, 10, 10]
@@ -100,15 +98,11 @@ def build_kinodynamics_problem(model_handler):
         w_cent=w_cent,
         w_centder=w_centder,
         gravity=gravity,
-        force_size=force_size,
         w_frame=w_frame,
         qmin=model_handler.getModel().lowerPositionLimit[7:],
         qmax=model_handler.getModel().upperPositionLimit[7:],
         mu=0.8,
-        Lfoot=0.01,
-        Wfoot=0.01,
-        kinematics_limits=True,
-        force_cone=False,
+        kinematics_limits=False,
         land_cstr=False,
         cent_cost=False,
         centder_cost=False,
@@ -116,11 +110,10 @@ def build_kinodynamics_problem(model_handler):
         term_dcm_cstr=False,
     )
 
-    problem = KinodynamicsOCP(problem_conf, model_handler)
+    problem = QuadKinodynOcp(problem_conf, model_handler)
     problem.createProblem(
         model_handler.getReferenceState(),
         HORIZON,
-        force_size,
         gravity[2],
         False,
     )

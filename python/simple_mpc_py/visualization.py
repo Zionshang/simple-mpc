@@ -43,7 +43,7 @@ class MPCMeshcatVisualizer:
 
     def capture_horizon(self, mpc):
         horizon = len(mpc.us)
-        force_size = mpc.ocp_handler.force_size_
+        force_size = 3
         optimized = {foot_name: [] for foot_name in self.foot_names}
         reference = {foot_name: [] for foot_name in self.foot_names}
         forces_stage0 = {}
