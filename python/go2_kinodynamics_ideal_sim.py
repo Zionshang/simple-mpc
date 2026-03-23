@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import sys
 import termios
 import time
@@ -46,6 +47,10 @@ def debug_play_step_by_step(visualizer, q_traj, horizons):
                 break
             if key.lower() == "q":
                 return
+
+
+def play_visualization(visualizer, q_traj, horizons):
+    visualizer.play(q_traj, horizons, repeat=False)
 
 
 def build_model_handler():
@@ -197,7 +202,18 @@ def rollout_ideal_mpc(mpc, x0, nq, visualizer):
     }
 
 
+def parse_args():
+    parser = argparse.ArgumentParser(description="Pure Python Go2 kinodynamics ideal simulation.")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Use keyboard-controlled step-by-step visualization instead of continuous playback.",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
     robot, model_handler = build_model_handler()
     problem, gravity = build_kinodynamics_problem(model_handler)
     mpc = build_mpc(problem, model_handler, gravity)
@@ -212,7 +228,10 @@ def main():
         f"mean_solve_time={rollout['solve_times'].mean() * 1e3:.2f} ms",
     )
 
-    debug_play_step_by_step(visualizer, rollout["q_traj"], rollout["horizon_history"])
+    if args.debug:
+        debug_play_step_by_step(visualizer, rollout["q_traj"], rollout["horizon_history"])
+    else:
+        play_visualization(visualizer, rollout["q_traj"], rollout["horizon_history"])
 
 
 if __name__ == "__main__":

@@ -1,18 +1,7 @@
 from __future__ import annotations
 
-import math
-
+import ndcurves
 import numpy as np
-
-
-def _sample_bezier(control_points: np.ndarray, u: float) -> np.ndarray:
-    u = float(np.clip(u, 0.0, 1.0))
-    order = control_points.shape[0] - 1
-    sample = np.zeros(3)
-    for i, point in enumerate(control_points):
-        coeff = math.comb(order, i) * (u**i) * ((1.0 - u) ** (order - i))
-        sample += coeff * point
-    return sample
 
 
 class FootPlanner:
@@ -33,7 +22,7 @@ class FootPlanner:
 
         self.initial_poses_: dict[str, np.ndarray] = {}
         self.final_poses_: dict[str, np.ndarray] = {}
-        self.swing_trajectories_: dict[str, np.ndarray] = {}
+        self.swing_trajectories_: dict[str, object] = {}
         self.previous_in_contact_: dict[str, bool] = {}
         self.references_: dict[str, list[np.ndarray]] = {}
         self.foot_land_positions_: dict[str, list[np.ndarray]] = {}
@@ -158,7 +147,7 @@ class FootPlanner:
                 self.final_poses_[ee_name],
             )
 
-    def defineTranslationBezier(self, trans_init: np.ndarray, trans_final: np.ndarray) -> np.ndarray:
+    def defineTranslationBezier(self, trans_init: np.ndarray, trans_final: np.ndarray):
         trans_init = np.asarray(trans_init, dtype=float).copy()
         trans_final = np.asarray(trans_final, dtype=float).copy()
 
@@ -170,7 +159,12 @@ class FootPlanner:
         points.append(midpoint.copy())
         for _ in range(5, 9):
             points.append(trans_final.copy())
-        return np.asarray(points, dtype=float)
+
+        control_points = np.column_stack(points)
+        bezier_curve = ndcurves.bezier(control_points, 0.0, 1.0)
+        curve = ndcurves.piecewise()
+        curve.append(bezier_curve)
+        return curve
 
     def createTrajectory(
         self,
@@ -210,7 +204,9 @@ class FootPlanner:
                 if takeoff_now:
                     swing_start_time = int(takeoff_times[takeoff_id])
                     in_contact = False
-                    target_pose = np.asarray(land_poses[land_id], dtype=float).copy() if land_id < len(land_poses) else stance_pose
+                    target_pose = (
+                        np.asarray(land_poses[land_id], dtype=float).copy() if land_id < len(land_poses) else stance_pose
+                    )
                     swing_trajectory = self.defineTranslationBezier(stance_pose, target_pose)
                     takeoff_id += 1
 
@@ -230,7 +226,8 @@ class FootPlanner:
                         sample = landing_pose.copy()
                     else:
                         u = float(time - swing_start_time) / float(swing_duration)
-                        sample = _sample_bezier(swing_trajectory, u)
+                        u = min(max(u, 0.0), 1.0)
+                        sample = np.asarray(swing_trajectory(u), dtype=float).copy()
 
             trajectory[t] = np.asarray(sample, dtype=float).copy()
 
