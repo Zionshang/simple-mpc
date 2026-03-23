@@ -9,7 +9,7 @@ import tty
 import example_robot_data as erd
 import numpy as np
 
-from simple_mpc_py import MPC, MPCMeshcatVisualizer, RobotModelHandler, QuadKinodynOcp
+from simple_mpc_py import MPC, MPCMeshcatVisualizer, QuadKinodynOcp, QuadRobot
 
 
 BASE_JOINT_NAME = "root_joint"
@@ -53,17 +53,17 @@ def play_visualization(visualizer, q_traj, horizons):
     visualizer.play(q_traj, horizons, repeat=False)
 
 
-def build_model_handler():
-    robot = erd.load("go2")
-    model_handler = RobotModelHandler(robot.model, "standing", BASE_JOINT_NAME)
+def build_robot():
+    viewer_robot = erd.load("go2")
+    robot = QuadRobot(viewer_robot.model, "standing", BASE_JOINT_NAME)
     for foot_name in FOOT_NAMES:
-        model_handler.addPointFoot(foot_name, BASE_JOINT_NAME)
-    return robot, model_handler
+        robot.addPointFoot(foot_name, BASE_JOINT_NAME)
+    return viewer_robot, robot
 
 
-def build_kinodynamics_problem(model_handler):
+def build_kinodynamics_problem(robot):
     gravity = np.array([0.0, 0.0, -9.81])
-    nv = model_handler.getModel().nv
+    nv = robot.getModel().nv
     w_basepos = [0, 0, 100, 10, 10, 0]
     w_legpos = [1, 1, 1]
     w_basevel = [10, 10, 100, 10, 10, 10]
@@ -99,8 +99,8 @@ def build_kinodynamics_problem(model_handler):
         w_centder=w_centder,
         gravity=gravity,
         w_frame=w_frame,
-        qmin=model_handler.getModel().lowerPositionLimit[7:],
-        qmax=model_handler.getModel().upperPositionLimit[7:],
+        qmin=robot.getModel().lowerPositionLimit[7:],
+        qmax=robot.getModel().upperPositionLimit[7:],
         mu=0.8,
         kinematics_limits=False,
         land_cstr=False,
@@ -110,9 +110,9 @@ def build_kinodynamics_problem(model_handler):
         term_dcm_cstr=False,
     )
 
-    problem = QuadKinodynOcp(problem_conf, model_handler)
+    problem = QuadKinodynOcp(problem_conf, robot)
     problem.createProblem(
-        model_handler.getReferenceState(),
+        robot.getReferenceState(),
         HORIZON,
         gravity[2],
         False,
@@ -120,9 +120,9 @@ def build_kinodynamics_problem(model_handler):
     return problem, gravity
 
 
-def build_mpc(problem, model_handler, gravity):
+def build_mpc(problem, robot, gravity):
     mpc_conf = dict(
-        support_force=-model_handler.getMass() * gravity[2],
+        support_force=-robot.getMass() * gravity[2],
         TOL=1e-4,
         mu_init=1e-8,
         max_iters=1,
@@ -207,13 +207,13 @@ def parse_args():
 
 def main():
     args = parse_args()
-    robot, model_handler = build_model_handler()
-    problem, gravity = build_kinodynamics_problem(model_handler)
-    mpc = build_mpc(problem, model_handler, gravity)
-    visualizer = MPCMeshcatVisualizer(robot, model_handler, FOOT_NAMES, DT_MPC)
+    viewer_robot, robot = build_robot()
+    problem, gravity = build_kinodynamics_problem(robot)
+    mpc = build_mpc(problem, robot, gravity)
+    visualizer = MPCMeshcatVisualizer(viewer_robot, robot, FOOT_NAMES, DT_MPC)
 
-    x0 = np.array(model_handler.getReferenceState())
-    rollout = rollout_ideal_mpc(mpc, x0, model_handler.getModel().nq, visualizer)
+    x0 = np.array(robot.getReferenceState())
+    rollout = rollout_ideal_mpc(mpc, x0, robot.getModel().nq, visualizer)
 
     print(
         "Ideal MPC rollout complete:",

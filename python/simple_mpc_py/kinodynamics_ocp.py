@@ -8,22 +8,22 @@ import aligator.constraints as constraints
 import aligator.dynamics as dynamics
 import aligator.manifolds as manifolds
 
-from .robot_handler import RobotModelHandler
+from .robot_handler import QuadRobot
 
 
 FORCE_SIZE = 3
 
 
 class QuadKinodynOcp:
-    def __init__(self, settings: dict, model_handler: RobotModelHandler):
+    def __init__(self, settings: dict, robot: QuadRobot):
         self.settings_ = dict(settings)
-        self.model_handler_ = model_handler
-        self.model_ = model_handler.getModel()
+        self.robot = robot
+        self.model_ = robot.getModel()
         self.space_ = manifolds.MultibodyPhaseSpace(self.model_)
         self.nq_ = self.model_.nq
         self.nv_ = self.model_.nv
         self.ndx_ = self.space_.ndx
-        self.nu_ = self.nv_ - 6 + FORCE_SIZE * self.model_handler_.getFeetNb()
+        self.nu_ = self.nv_ - 6 + FORCE_SIZE * self.robot.getFeetNb()
         self.control_ref_ = np.zeros(self.nu_)
         self.size_ = 0
         self.problem_: aligator.TrajOptProblem | None = None
@@ -32,7 +32,7 @@ class QuadKinodynOcp:
         self.terminal_dcm_residual_ = None
 
     def _foot_names(self) -> list[str]:
-        return self.model_handler_.getFeetFrameNames()
+        return self.robot.getFeetFrameNames()
 
     def _identity_pose_map(self) -> dict[str, pin.SE3]:
         return {name: pin.SE3.Identity() for name in self._foot_names()}
@@ -64,7 +64,7 @@ class QuadKinodynOcp:
         contact_force: dict[str, np.ndarray],
         land_constraint: dict[str, bool],
     ):
-        space = manifolds.MultibodyPhaseSpace(self.model_handler_.getModel())
+        space = manifolds.MultibodyPhaseSpace(self.robot.getModel())
         rcost = aligator.CostStack(space, self.nu_)
         contact_states = [bool(contact_phase[name]) for name in self._foot_names()]
 
@@ -75,7 +75,7 @@ class QuadKinodynOcp:
             aligator.QuadraticStateCost(
                 space,
                 self.nu_,
-                self.model_handler_.getReferenceState(),
+                self.robot.getReferenceState(),
                 self.settings_["w_x"],
             ),
         )
@@ -88,7 +88,7 @@ class QuadKinodynOcp:
             cent_mom = aligator.CentroidalMomentumResidual(
                 space.ndx,
                 self.nu_,
-                self.model_handler_.getModel(),
+                self.robot.getModel(),
                 np.zeros(6),
             )
             rcost.addCost(
@@ -99,10 +99,10 @@ class QuadKinodynOcp:
         if self.settings_.get("centder_cost", False):
             centder_mom = aligator.CentroidalMomentumDerivativeResidual(
                 space.ndx,
-                self.model_handler_.getModel(),
+                self.robot.getModel(),
                 np.asarray(self.settings_["gravity"], dtype=float),
                 contact_states,
-                self.model_handler_.getFeetFrameIds(),
+                self.robot.getFeetFrameIds(),
                 FORCE_SIZE,
             )
             rcost.addCost(
@@ -111,11 +111,11 @@ class QuadKinodynOcp:
             )
 
         for foot_nb, name in enumerate(self._foot_names()):
-            frame_id = self.model_handler_.getFootFrameId(foot_nb)
+            frame_id = self.robot.getFootFrameId(foot_nb)
             frame_residual = aligator.FrameTranslationResidual(
                 space.ndx,
                 self.nu_,
-                self.model_handler_.getModel(),
+                self.robot.getModel(),
                 np.array(contact_pose[name].translation),
                 frame_id,
             )
@@ -126,10 +126,10 @@ class QuadKinodynOcp:
 
         ode = dynamics.KinodynamicsFwdDynamics(
             space,
-            self.model_handler_.getModel(),
+            self.robot.getModel(),
             np.asarray(self.settings_["gravity"], dtype=float),
             contact_states,
-            self.model_handler_.getFeetFrameIds(),
+            self.robot.getFeetFrameIds(),
             FORCE_SIZE,
         )
         dyn_model = dynamics.IntegratorSemiImplEuler(ode, float(self.settings_["timestep"]))
@@ -153,9 +153,9 @@ class QuadKinodynOcp:
                 frame_vel = aligator.FrameVelocityResidual(
                     space.ndx,
                     self.nu_,
-                    self.model_handler_.getModel(),
+                    self.robot.getModel(),
                     v_ref,
-                    self.model_handler_.getFootFrameId(foot_nb),
+                    self.robot.getFootFrameId(foot_nb),
                     pin.LOCAL,
                 )
                 friction_residual = aligator.CentroidalFrictionConeResidual(
@@ -173,9 +173,9 @@ class QuadKinodynOcp:
                     frame_residual = aligator.FrameTranslationResidual(
                         space.ndx,
                         self.nu_,
-                        self.model_handler_.getModel(),
+                        self.robot.getModel(),
                         np.array(contact_pose[name].translation),
-                        self.model_handler_.getFootFrameId(foot_nb),
+                        self.robot.getFootFrameId(foot_nb),
                     )
                     frame_slice = aligator.StageFunctionSliceXpr(frame_residual, [2])
                     stage.addConstraint(frame_slice, constraints.EqualityConstraintSet())
@@ -211,14 +211,14 @@ class QuadKinodynOcp:
         return stage_models
 
     def createTerminalCost(self):
-        space = manifolds.MultibodyPhaseSpace(self.model_handler_.getModel())
+        space = manifolds.MultibodyPhaseSpace(self.robot.getModel())
         term_cost = aligator.CostStack(space, self.nu_)
         term_cost.addCost(
             "state_cost",
             aligator.QuadraticStateCost(
                 space,
                 self.nu_,
-                self.model_handler_.getReferenceState(),
+                self.robot.getReferenceState(),
                 self.settings_["w_x"],
             ),
         )
@@ -227,7 +227,7 @@ class QuadKinodynOcp:
             cent_mom = aligator.CentroidalMomentumResidual(
                 space.ndx,
                 self.nu_,
-                self.model_handler_.getModel(),
+                self.robot.getModel(),
                 np.zeros(6),
             )
             term_cost.addCost(
@@ -250,7 +250,7 @@ class QuadKinodynOcp:
         self.terminal_dcm_residual_ = aligator.DCMPositionResidual(
             self.ndx_,
             self.nu_,
-            self.model_handler_.getModel(),
+            self.robot.getModel(),
             com_ref,
             tau,
         )
@@ -278,7 +278,7 @@ class QuadKinodynOcp:
         contact_forces = []
 
         force_ref = np.zeros(FORCE_SIZE)
-        force_ref[2] = -self.model_handler_.getMass() * float(gravity) / float(self.model_handler_.getFeetNb())
+        force_ref[2] = -self.robot.getMass() * float(gravity) / float(self.robot.getFeetNb())
 
         contact_phase = {name: True for name in self._foot_names()}
         contact_pose = self._identity_pose_map()
@@ -306,15 +306,15 @@ class QuadKinodynOcp:
     def getSize(self) -> int:
         return self.size_
 
-    def getModelHandler(self) -> RobotModelHandler:
-        return self.model_handler_
+    def getRobot(self) -> QuadRobot:
+        return self.robot
 
     def setReferencePose(self, t: int, ee_name: str, pose_ref: pin.SE3) -> None:
         qrc = self._get_cost_stack(t).getComponent(f"{ee_name}_pose_cost")
         qrc.residual.setReference(np.array(pose_ref.translation))
 
     def getReferenceForce(self, t: int, ee_name: str) -> np.ndarray:
-        foot_id = self.model_handler_.getFootNb(ee_name)
+        foot_id = self.robot.getFootNb(ee_name)
         start = foot_id * FORCE_SIZE
         return self.getReferenceControl(t)[start : start + FORCE_SIZE].copy()
 

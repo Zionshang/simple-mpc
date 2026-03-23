@@ -10,8 +10,8 @@ import pinocchio as pin
 class MPCMeshcatVisualizer:
     def __init__(
         self,
+        viewer_robot,
         robot,
-        model_handler,
         foot_names,
         dt,
         force_scale=0.0025,
@@ -19,18 +19,17 @@ class MPCMeshcatVisualizer:
         viewer_name="simple_mpc_py",
     ):
         self.robot = robot
-        self.model_handler = model_handler
-        self.model = model_handler.getModel()
+        self.model = robot.getModel()
         self.data = self.model.createData()
         self.foot_names = list(foot_names)
         self.dt = dt
         self.force_scale = force_scale
-        self.foot_ids = {foot_name: model_handler.getFootNb(foot_name) for foot_name in self.foot_names}
+        self.foot_ids = {foot_name: robot.getFootNb(foot_name) for foot_name in self.foot_names}
 
         self.viz = pin.visualize.MeshcatVisualizer(
-            robot.model,
-            robot.collision_model,
-            robot.visual_model,
+            viewer_robot.model,
+            viewer_robot.collision_model,
+            viewer_robot.visual_model,
         )
         self.viz.initViewer(open=open_viewer)
         self.viz.loadViewerModel(viewer_name)
@@ -48,7 +47,7 @@ class MPCMeshcatVisualizer:
         pin.updateFramePlacements(self.model, self.data)
 
     def _get_foot_translation(self, foot_name: str) -> np.ndarray:
-        foot_frame_id = self.model_handler.getFootFrameId(self.foot_ids[foot_name])
+        foot_frame_id = self.robot.getFootFrameId(self.foot_ids[foot_name])
         return np.array(self.data.oMf[foot_frame_id].translation)
 
     def capture_horizon(self, mpc):

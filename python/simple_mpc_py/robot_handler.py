@@ -4,7 +4,7 @@ import numpy as np
 import pinocchio as pin
 
 
-class RobotModelHandler:
+class QuadRobot:
     def __init__(self, model: pin.Model, reference_configuration_name: str, base_frame_name: str):
         self._model = model.copy()
         self._base_frame_id = self._model.getFrameId(base_frame_name)

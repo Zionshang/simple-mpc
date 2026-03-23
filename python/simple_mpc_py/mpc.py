@@ -35,16 +35,16 @@ class MPC:
         self.settings_ = MPCSettings.from_dict(settings)
         self.ocp_handler_ = problem
 
-        model_handler = self.ocp_handler_.getModelHandler()
-        self.model_handler_ = model_handler
-        self.model_ = model_handler.getModel()
+        robot = self.ocp_handler_.getRobot()
+        self.robot = robot
+        self.model_ = robot.getModel()
         self.data_ = self.model_.createData()
-        self._update_kinematics(model_handler.getReferenceState(), update_com=True)
+        self._update_kinematics(robot.getReferenceState(), update_com=True)
 
         starting_poses = {}
-        for foot_nb in range(model_handler.getFeetNb()):
-            name = model_handler.getFootFrameName(foot_nb)
-            foot_frame_id = self.model_handler_.getFootFrameId(foot_nb)
+        for foot_nb in range(robot.getFeetNb()):
+            name = robot.getFootFrameName(foot_nb)
+            foot_frame_id = self.robot.getFootFrameId(foot_nb)
             starting_poses[name] = np.array(self.data_.oMf[foot_frame_id].translation)
 
         self.foot_planner_ = FootPlanner(
@@ -56,7 +56,7 @@ class MPC:
             self.settings_.timestep,
         )
 
-        self.x0_ = np.array(model_handler.getReferenceState(), dtype=float)
+        self.x0_ = np.array(robot.getReferenceState(), dtype=float)
         self.x_reference_ = self.ocp_handler_.getReferenceState(0)
 
         self.solver_ = aligator.SolverProxDDP(
@@ -73,16 +73,16 @@ class MPC:
             self.solver_.linear_solver_choice = aligator.LQ_SOLVER_SERIAL
         self.solver_.force_initial_condition = True
 
-        self.ee_names_ = model_handler.getFeetFrameNames()
-        force_ref = self.ocp_handler_.getReferenceForce(0, model_handler.getFootFrameName(0))
+        self.ee_names_ = robot.getFeetFrameNames()
+        force_ref = self.ocp_handler_.getReferenceForce(0, robot.getFootFrameName(0))
 
         contact_states = {}
         land_constraint = {}
         contact_poses = {}
         force_map = {}
         for name in self.ee_names_:
-            foot_nb = model_handler.getFootNb(name)
-            placement = self.data_.oMf[self.model_handler_.getFootFrameId(foot_nb)]
+            foot_nb = robot.getFootNb(name)
+            placement = self.data_.oMf[self.robot.getFootFrameId(foot_nb)]
             contact_states[name] = True
             land_constraint[name] = False
             contact_poses[name] = pin.SE3(np.array(placement.rotation), np.array(placement.translation))
@@ -182,7 +182,7 @@ class MPC:
             active_contacts = sum(1 for active in state.values() if active)
             force_ref = self.ocp_handler_.getReferenceForce(
                 0,
-                self.ocp_handler_.getModelHandler().getFootFrameName(0),
+                self.ocp_handler_.getRobot().getFootFrameName(0),
             )
             force_ref = np.asarray(force_ref, dtype=float)
             force_zero = np.zeros_like(force_ref)
@@ -193,8 +193,8 @@ class MPC:
             contact_poses = {}
             force_map = {}
             for name in self.ee_names_:
-                foot_nb = self.model_handler_.getFootNb(name)
-                placement = self.data_.oMf[self.model_handler_.getFootFrameId(foot_nb)]
+                foot_nb = self.robot.getFootNb(name)
+                placement = self.data_.oMf[self.robot.getFootFrameId(foot_nb)]
                 contact_poses[name] = pin.SE3(np.array(placement.rotation), np.array(placement.translation))
                 force_map[name] = force_ref if state[name] else force_zero
 
@@ -240,10 +240,10 @@ class MPC:
     def updateStepTrackerReferences(self) -> None:
         horizon_contact_states = self.getHorizonContactStates()
         for name in self.ee_names_:
-            foot_nb = self.model_handler_.getFootNb(name)
-            foot_ref_frame_id = self.model_handler_.getFootRefFrameId(foot_nb)
-            base_frame_id = self.model_handler_.getBaseFrameId()
-            foot_frame_id = self.model_handler_.getFootFrameId(foot_nb)
+            foot_nb = self.robot.getFootNb(name)
+            foot_ref_frame_id = self.robot.getFootRefFrameId(foot_nb)
+            base_frame_id = self.robot.getBaseFrameId()
+            foot_frame_id = self.robot.getFootFrameId(foot_nb)
             self.foot_planner_.updateFootReference(
                 name,
                 foot_nb,
