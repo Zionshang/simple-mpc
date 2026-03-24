@@ -90,7 +90,6 @@ def build_recording_mpc(problem, robot, gravity, gait: Gait):
     contact_phases, fly_steps, contact_steps = gait.build_cycle()
 
     mpc_conf = dict(
-        support_force=-robot.getMass() * gravity[2],
         TOL=1e-4,
         mu_init=1e-8,
         max_iters=2,

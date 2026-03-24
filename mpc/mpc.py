@@ -12,7 +12,6 @@ from .foot_planner import FootPlanner
 
 @dataclass
 class MPCSettings:
-    support_force: float = 1000.0
     TOL: float = 1e-4
     mu_init: float = 1e-8
     max_iters: int = 1
@@ -34,12 +33,13 @@ class MPC:
 
     def __init__(self, settings: dict, problem):
         self.settings_ = MPCSettings.from_dict(settings)
-        self.ocp_handler_ = problem
+        self.ocp_ = problem
 
-        robot = self.ocp_handler_.getRobot()
+        robot = self.ocp_.getRobot()
         self.robot = robot
         self.model_ = robot.getModel()
         self.data_ = self.model_.createData()
+        self.support_force_ = -self.robot.getMass() * self.ocp_.settings_["gravity"][2]
         self._update_kinematics(robot.getReferenceState())
 
         starting_poses = {}
@@ -53,7 +53,7 @@ class MPC:
             self.settings_.swing_apex,
             self.settings_.T_fly,
             self.settings_.T_contact,
-            self.ocp_handler_.getSize(),
+            self.ocp_.getSize(),
             self.settings_.timestep,
         )
         self.x0_ = np.array(robot.getReferenceState(), dtype=float)
@@ -73,7 +73,7 @@ class MPC:
         self.solver_.force_initial_condition = True
 
         self.ee_names_ = robot.getFeetFrameNames()
-        force_ref = self.ocp_handler_.getReferenceForce(0, robot.getFootFrameName(0))
+        force_ref = self.ocp_.getReferenceForce(0, robot.getFootFrameName(0))
 
         contact_states = {}
         land_constraint = {}
@@ -97,16 +97,16 @@ class MPC:
         self.foot_takeoff_times_ = {}
         self.foot_land_times_ = {}
 
-        for _ in range(len(self.ocp_handler_.getProblem().stages)):
+        for _ in range(len(self.ocp_.getProblem().stages)):
             self.xs_.append(self.x0_.copy())
-            self.us_.append(self.ocp_handler_.getReferenceControl(0))
-            stage = self.ocp_handler_.createStage(contact_states, contact_poses, force_map, land_constraint)
+            self.us_.append(self.ocp_.getReferenceControl(0))
+            stage = self.ocp_.createStage(contact_states, contact_poses, force_map, land_constraint)
             self.standing_horizon_.append(stage)
             self.standing_horizon_data_.append(stage.createData())
         self.xs_.append(self.x0_.copy())
 
-        self.solver_.setup(self.ocp_handler_.getProblem())
-        self.solver_.run(self.ocp_handler_.getProblem(), self.xs_, self.us_)
+        self.solver_.setup(self.ocp_.getProblem())
+        self.solver_.run(self.ocp_.getProblem(), self.xs_, self.us_)
 
         self.xs_ = [np.array(x) for x in self.solver_.results.xs]
         self.us_ = [np.array(u) for u in self.solver_.results.us]
@@ -134,7 +134,7 @@ class MPC:
 
     @property
     def ocp_handler(self):
-        return self.ocp_handler_
+        return self.ocp_
 
     @property
     def xs(self):
@@ -145,7 +145,7 @@ class MPC:
         return [u.copy() for u in self.us_]
 
     def rollout(self, x: np.ndarray, u: np.ndarray, stage_index: int = 0) -> np.ndarray:
-        stage = self.ocp_handler_.getProblem().stages[stage_index]
+        stage = self.ocp_.getProblem().stages[stage_index]
         integrator = aligator.dynamics.IntegratorSemiImplEuler(
             stage.dynamics.differential_dynamics,
             self.settings_.rollout_timestep,
@@ -169,7 +169,7 @@ class MPC:
         self.foot_takeoff_times_.clear()
         self.foot_land_times_.clear()
 
-        m = self.ocp_handler_.getSize() // len(contact_states)
+        m = self.ocp_.getSize() // len(contact_states)
         for _ in range(m):
             self.contact_states_.extend(dict(state) for state in contact_states)
 
@@ -178,28 +178,28 @@ class MPC:
             self.foot_land_times_[name] = []
             for i in range(1, len(self.contact_states_)):
                 if (not self.contact_states_[i][name]) and self.contact_states_[i - 1][name]:
-                    self.foot_takeoff_times_[name].append(i + self.ocp_handler_.getSize())
+                    self.foot_takeoff_times_[name].append(i + self.ocp_.getSize())
                 if self.contact_states_[i][name] and (not self.contact_states_[i - 1][name]):
-                    self.foot_land_times_[name].append(i + self.ocp_handler_.getSize())
+                    self.foot_land_times_[name].append(i + self.ocp_.getSize())
             if self.contact_states_[-1][name] and (not self.contact_states_[0][name]):
-                self.foot_takeoff_times_[name].append(len(self.contact_states_) - 1 + self.ocp_handler_.getSize())
+                self.foot_takeoff_times_[name].append(len(self.contact_states_) - 1 + self.ocp_.getSize())
             if (not self.contact_states_[-1][name]) and self.contact_states_[0][name]:
-                self.foot_land_times_[name].append(len(self.contact_states_) - 1 + self.ocp_handler_.getSize())
+                self.foot_land_times_[name].append(len(self.contact_states_) - 1 + self.ocp_.getSize())
 
         self.foot_planner_.reset(self.contact_states_[0])
 
         previous_contacts = {name: True for name in self.ee_names_}
         for state in self.contact_states_:
             active_contacts = sum(1 for active in state.values() if active)
-            force_ref = self.ocp_handler_.getReferenceForce(
+            force_ref = self.ocp_.getReferenceForce(
                 0,
-                self.ocp_handler_.getRobot().getFootFrameName(0),
+                self.ocp_.getRobot().getFootFrameName(0),
             )
             force_ref = np.asarray(force_ref, dtype=float)
             force_zero = np.zeros_like(force_ref)
             force_ref[:] = 0.0
             if active_contacts > 0:
-                force_ref[2] = self.settings_.support_force / float(active_contacts)
+                force_ref[2] = self.support_force_ / float(active_contacts)
 
             contact_poses = {}
             force_map = {}
@@ -213,13 +213,13 @@ class MPC:
             for name in self.ee_names_:
                 land_contacts[name] = (not previous_contacts[name]) and state[name]
 
-            stage = self.ocp_handler_.createStage(state, contact_poses, force_map, land_contacts)
+            stage = self.ocp_.createStage(state, contact_poses, force_map, land_contacts)
             self.cycle_horizon_.append(stage)
             self.cycle_horizon_data_.append(stage.createData())
             previous_contacts = dict(state)
 
     def updateCycleTiming(self, update_only_horizon: bool) -> None:
-        horizon = self.ocp_handler_.getSize()
+        horizon = self.ocp_.getSize()
         for name in self.ee_names_:
             for i in range(len(self.foot_land_times_[name])):
                 if (not update_only_horizon) or self.foot_land_times_[name][i] < horizon:
@@ -234,11 +234,11 @@ class MPC:
                 self.foot_takeoff_times_[name].pop(0)
 
     def getHorizonContactStates(self):
-        return [self.ocp_handler_.getContactState(t) for t in range(self.ocp_handler_.getSize())]
+        return [self.ocp_.getContactState(t) for t in range(self.ocp_.getSize())]
 
     def updateStateReferences(self, state_ref: np.ndarray) -> None:
-        for time in range(self.ocp_handler_.getSize()):
-            self.ocp_handler_.setReferenceState(time, state_ref[time])
+        for time in range(self.ocp_.getSize()):
+            self.ocp_.setReferenceState(time, state_ref[time])
 
     def updateStepTrackerReferences(self, state_ref: np.ndarray) -> None:
         self.updateStateReferences(state_ref)
@@ -260,16 +260,16 @@ class MPC:
             )
 
             pose = pin.SE3.Identity()
-            for time in range(self.ocp_handler_.getSize()):
+            for time in range(self.ocp_.getSize()):
                 pose.translation = self.foot_planner_.getReference(name)[time]
-                self.ocp_handler_.setReferencePose(time, name, pose)
+                self.ocp_.setReferencePose(time, name, pose)
 
     def getReferencePose(self, t: int, ee_name: str) -> pin.SE3:
-        return self.ocp_handler_.getReferencePose(t, ee_name)
+        return self.ocp_.getReferencePose(t, ee_name)
 
     def recedeWithCycle(self) -> None:
-        problem = self.ocp_handler_.getProblem()
-        if self.now_ == self.WALKING or self.ocp_handler_.getContactSupport(self.ocp_handler_.getSize() - 1) < len(
+        problem = self.ocp_.getProblem()
+        if self.now_ == self.WALKING or self.ocp_.getContactSupport(self.ocp_.getSize() - 1) < len(
             self.ee_names_
         ):
             if not self.cycle_horizon_:
@@ -284,9 +284,9 @@ class MPC:
 
             for name in self.ee_names_:
                 if (not self.contact_states_[-1][name]) and self.contact_states_[-2][name]:
-                    self.foot_takeoff_times_[name].append(len(self.contact_states_) + self.ocp_handler_.getSize())
+                    self.foot_takeoff_times_[name].append(len(self.contact_states_) + self.ocp_.getSize())
                 if self.contact_states_[-1][name] and (not self.contact_states_[-2][name]):
-                    self.foot_land_times_[name].append(len(self.contact_states_) + self.ocp_handler_.getSize())
+                    self.foot_land_times_[name].append(len(self.contact_states_) + self.ocp_.getSize())
             self.updateCycleTiming(False)
         else:
             problem.replaceStageCircular(self.standing_horizon_[0])
@@ -310,9 +310,9 @@ class MPC:
         self.us_.pop(0)
         self.us_.append(self.us_[-1].copy())
 
-        self.ocp_handler_.getProblem().x0_init = self.x0_
+        self.ocp_.getProblem().x0_init = self.x0_
 
-        self.solver_.run(self.ocp_handler_.getProblem(), self.xs_, self.us_)
+        self.solver_.run(self.ocp_.getProblem(), self.xs_, self.us_)
 
         self.xs_ = [np.array(xi) for xi in self.solver_.results.xs]
         self.us_ = [np.array(ui) for ui in self.solver_.results.us]
