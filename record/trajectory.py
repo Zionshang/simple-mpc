@@ -56,7 +56,7 @@ class TrajectoryGenerator:
 
     def make_default_run_name(self, command: np.ndarray) -> str:
         vx, vy, vyaw, height = np.asarray(command, dtype=np.float64)
-        prefix = f"{self.config.gait_type}{self.format_scan_value(self.config.gait_period)}"
+        prefix = f"{self.config.gait_command}{self.format_scan_value(self.config.gait_period)}"
         return (
             f"{prefix}"
             f"_x{self.format_scan_value(vx)}"
@@ -66,12 +66,8 @@ class TrajectoryGenerator:
         )
 
     def build_commands(self) -> list[CommandJob]:
-        if not self.config.batch_scan_mode:
-            command = np.asarray(self.config.target_velocity_command, dtype=np.float64)
-            return [CommandJob(command=command, run_name=self.make_default_run_name(command))]
-
         commands = []
-        prefix = f"{self.config.gait_type}{self.format_scan_value(self.config.gait_period)}"
+        prefix = f"{self.config.gait_command}{self.format_scan_value(self.config.gait_period)}"
         for vx in self.config.batch_scan_x_values:
             for vy in self.config.batch_scan_y_values:
                 for vyaw in self.config.batch_scan_yaw_values:
@@ -121,7 +117,7 @@ class TrajectoryGenerator:
         vyaw_max = float(command[2])
         height = float(command[3])
 
-        reference_dt = float(self.config.dt)
+        reference_dt = float(self.config.dt_mpc)
         if reference_dt <= 0.0:
             raise ValueError("reference dt must be positive")
 

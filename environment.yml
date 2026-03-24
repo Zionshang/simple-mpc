@@ -1,4 +1,4 @@
-name: simple-mpc
+name: opti2amp
 channels:
   - conda-forge
 dependencies:

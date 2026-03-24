@@ -8,7 +8,6 @@ import pinocchio as pin
 
 
 class YamlRecorder:
-    TARGET_DT = 0.005
     TARGET_WEIGHT = 1.0
     FOOT_PREFIXES = ["FL", "FR", "RL", "RR"]
     FOOT_FRAME_NAMES = {
@@ -34,7 +33,7 @@ class YamlRecorder:
     JOINT_VEL_FIELD_NAMES = [name.replace("_q", "_dq") for name in JOINT_FIELD_NAMES]
 
     def __init__(self, target_dt: float | None = None, weight: float | None = None):
-        self.target_dt = float(self.TARGET_DT if target_dt is None else target_dt)
+        self.target_dt = None if target_dt is None else float(target_dt)
         self.weight = float(self.TARGET_WEIGHT if weight is None else weight)
 
     @staticmethod
@@ -70,7 +69,8 @@ class YamlRecorder:
             return q_traj, v_traj
 
         source_times = np.arange(len(q_traj), dtype=np.float64) * float(source_dt)
-        target_times = np.arange(0.0, source_times[-1] + 1e-12, self.target_dt)
+        target_dt = float(source_dt if self.target_dt is None else self.target_dt)
+        target_times = np.arange(0.0, source_times[-1] + 1e-12, target_dt)
 
         q_resampled = []
         v_resampled = []
@@ -121,7 +121,7 @@ class YamlRecorder:
         model = self._get_robot_model(robot)
         data = model.createData()
         dataset = {
-            "dt": float(self.target_dt),
+            "dt": float(source_dt if self.target_dt is None else self.target_dt),
             "weight": float(self.weight),
             "length": len(q_resampled),
             "root_position_world": [],
