@@ -8,6 +8,7 @@ import pinocchio as pin
 import aligator
 
 from .foot_planner import FootPlanner
+from .state_planner import StatePlanner
 
 
 @dataclass
@@ -55,9 +56,13 @@ class MPC:
             self.ocp_handler_.getSize(),
             self.settings_.timestep,
         )
+        self.state_planner_ = StatePlanner(
+            robot,
+            self.ocp_handler_.getSize(),
+            self.settings_.timestep,
+        )
 
         self.x0_ = np.array(robot.getReferenceState(), dtype=float)
-        self.x_reference_ = self.ocp_handler_.getReferenceState(0)
 
         self.solver_ = aligator.SolverProxDDP(
             self.settings_.TOL,
@@ -225,12 +230,13 @@ class MPC:
     def getHorizonContactStates(self):
         return [self.ocp_handler_.getContactState(t) for t in range(self.ocp_handler_.getSize())]
 
-    def updateTerminalReferences(self) -> None:
-        horizon = self.ocp_handler_.getSize()
-        self.ocp_handler_.setReferenceState(horizon - 1, self.x_reference_)
-        self.ocp_handler_.setVelocityBase(horizon - 1, self.velocity_base_)
+    def updateStateReferences(self, x_current: np.ndarray) -> None:
+        self.state_planner_.updateReference(x_current, self.velocity_base_)
+        for time in range(self.ocp_handler_.getSize()):
+            self.ocp_handler_.setReferenceState(time, self.state_planner_.getReference(time))
 
-    def updateStepTrackerReferences(self) -> None:
+    def updateStepTrackerReferences(self, x_current: np.ndarray) -> None:
+        self.updateStateReferences(x_current)
         horizon_contact_states = self.getHorizonContactStates()
         for name in self.ee_names_:
             foot_nb = self.robot.getFootNb(name)
@@ -253,7 +259,6 @@ class MPC:
                 pose.translation = self.foot_planner_.getReference(name)[time]
                 self.ocp_handler_.setReferencePose(time, name, pose)
 
-        self.updateTerminalReferences()
 
     def getReferencePose(self, t: int, ee_name: str) -> pin.SE3:
         return self.ocp_handler_.getReferencePose(t, ee_name)
@@ -291,7 +296,7 @@ class MPC:
     def iterate(self, x: np.ndarray) -> None:
         self._update_kinematics(x)
         self.recedeWithCycle()
-        self.updateStepTrackerReferences()
+        self.updateStepTrackerReferences(x)
 
         self.x0_ = np.array(x, dtype=float)
         self.xs_.pop(0)

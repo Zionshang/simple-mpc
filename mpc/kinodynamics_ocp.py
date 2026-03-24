@@ -250,14 +250,6 @@ class QuadKinodynOcp:
         pose_ref.translation = np.asarray(qrc.residual.getReference(), dtype=float)
         return pose_ref
 
-    def setVelocityBase(self, t: int, velocity_base: np.ndarray) -> None:
-        velocity_base = np.asarray(velocity_base, dtype=float)
-        if velocity_base.shape[0] != 6:
-            raise RuntimeError("velocity_base size should be 6")
-        x_ref = self.getReferenceState(t)
-        x_ref[self.nq_ : self.nq_ + 6] = velocity_base
-        self.setReferenceState(t, x_ref)
-
     def setReferenceState(self, t: int, x_ref: np.ndarray) -> None:
         x_ref = np.asarray(x_ref, dtype=float)
         if x_ref.shape[0] != self.nq_ + self.nv_:
