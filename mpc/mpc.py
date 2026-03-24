@@ -114,7 +114,6 @@ class MPC:
         self.solver_.max_iters = self.settings_.max_iters
 
         self.now_ = self.WALKING
-        self.velocity_base_ = np.zeros(6)
         self.rollout_substeps_ = int(round(self.settings_.timestep / self.settings_.rollout_timestep))
 
     def _update_kinematics(self, x: np.ndarray) -> None:
@@ -123,18 +122,6 @@ class MPC:
         v = x[self.model_.nq :]
         pin.forwardKinematics(self.model_, self.data_, q, v)
         pin.updateFramePlacements(self.model_, self.data_)
-
-    @property
-    def velocity_base(self):
-        return self.velocity_base_
-
-    @velocity_base.setter
-    def velocity_base(self, value):
-        self.velocity_base_ = np.asarray(value, dtype=float).copy()
-
-    @property
-    def ocp_handler(self):
-        return self.ocp_
 
     @property
     def xs(self):
@@ -243,6 +230,7 @@ class MPC:
     def updateStepTrackerReferences(self, state_ref: np.ndarray) -> None:
         self.updateStateReferences(state_ref)
         horizon_contact_states = self.getHorizonContactStates()
+        velocity_base = state_ref[0, self.model_.nq : self.model_.nq + 6]
         for name in self.ee_names_:
             foot_nb = self.robot.getFootNb(name)
             foot_ref_frame_id = self.robot.getFootRefFrameId(foot_nb)
@@ -256,7 +244,7 @@ class MPC:
                 self.data_.oMf[foot_ref_frame_id].translation,
                 self.data_.oMf[base_frame_id].translation,
                 self.data_.oMf[foot_frame_id].translation,
-                self.velocity_base_,
+                velocity_base,
             )
 
             pose = pin.SE3.Identity()

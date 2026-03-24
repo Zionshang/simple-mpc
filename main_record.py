@@ -124,7 +124,8 @@ def main() -> None:
         f"with dt={record_config.dt_mpc:.3f}s duration={record_config.target_duration:.2f}s"
     )
 
-    outputs = []
+    total_solve_time = 0.0
+    total_solve_steps = 0
     shared_robot = None
     shared_mpc = None
     x_current = None
@@ -132,6 +133,7 @@ def main() -> None:
         shared_robot, shared_mpc = build_recording_stack(record_config)
         x_current = np.array(shared_robot.getReferenceState(), dtype=np.float64)
 
+    # Outer loop: one recording round per batch command.
     for index, command_job in enumerate(commands, start=1):
         print(f"[{index}/{len(commands)}] command={command_job.command} run={command_job.run_name}")
         if record_config.reset_each_round:
@@ -141,6 +143,7 @@ def main() -> None:
             robot, mpc = shared_robot, shared_mpc
             x_initial = x_current
 
+        # Each round starts from the chosen initial state and generates one offline reference.
         nq = robot.getModel().nq
         x_current = np.array(x_initial, dtype=np.float64)
         q_record = [x_current[:nq].copy()]
@@ -151,20 +154,25 @@ def main() -> None:
         if visualizer is not None:
             visualizer.display_offline_plan(global_reference["state_trajectory"])
 
+        # Inner loop: window the global reference, solve MPC, rollout, then visualize.
         for step in range(record_config.mpc_loops):
+            # Reference
             state_ref = trajectory_generator.build_mpc_reference_window(
                 global_reference,
                 start_index=step,
                 horizon=record_config.horizon,
             )
-            mpc.velocity_base = state_ref[0, nq : nq + 6]
 
+            # Solve MPC
             start_time = time.perf_counter()
             mpc.iterate(x_current, state_ref=state_ref)
             solve_time = time.perf_counter() - start_time
             solve_times.append(solve_time)
 
+            # Rollout simulation
             x_current = mpc.rollout(x_current, mpc.us[0]).astype(np.float64, copy=False)
+
+            # Record
             q_record.append(x_current[:nq].copy())
             v_record.append(x_current[nq:].copy())
 
@@ -174,36 +182,31 @@ def main() -> None:
                 if record_config.visualization_sleep:
                     time.sleep(record_config.dt_mpc)
 
+            # Print progress every few steps.
             if step % record_config.mpc_print_every == 0 or step == record_config.mpc_loops - 1:
                 print(
                     f"[{command_job.run_name}] step={step:03d}/{record_config.mpc_loops - 1:03d} "
                     f"solve_time={solve_times[-1] * 1e3:.2f} ms pos={x_current[:3]}"
                 )
 
+        # Save one dataset per round after the low-level simulation loop finishes.
         dataset = yaml_recorder.build_dataset(robot, q_record, v_record, source_dt=record_config.dt_mpc)
         output_path = yaml_recorder.save_dataset(
             dataset=dataset,
             output_dir=record_config.recording_dir,
             run_name=command_job.run_name,
         )
-        outputs.append(
-            {
-                "output_path": output_path,
-                "solve_times": np.asarray(solve_times, dtype=np.float64),
-                "samples": len(q_record),
-            }
-        )
+        total_solve_time += float(np.sum(solve_times))
+        total_solve_steps += len(solve_times)
+        print(f"saved {len(q_record)} samples -> {output_path}")
 
-    solve_times = np.concatenate([item["solve_times"] for item in outputs]) if outputs else np.array([])
-    mean_solve_time_ms = 0.0 if solve_times.size == 0 else float(solve_times.mean() * 1e3)
+    mean_solve_time_ms = 0.0 if total_solve_steps == 0 else 1e3 * total_solve_time / total_solve_steps
     print(
         "recording complete:",
-        f"runs={len(outputs)}",
+        f"runs={len(commands)}",
         f"mean_solve_time={mean_solve_time_ms:.2f} ms",
         f"output_dir={record_config.recording_dir}",
     )
-    for item in outputs:
-        print(f"saved {item['samples']} samples -> {item['output_path']}")
 
 
 if __name__ == "__main__":

@@ -96,10 +96,6 @@ def build_mpc(problem, robot, gravity, gait: Gait):
     )
     mpc = MPC(mpc_conf, problem)
     mpc.generateCycleHorizon(contact_phases)
-
-    velocity_base = np.zeros(6)
-    velocity_base[0] = 1.0
-    mpc.velocity_base = velocity_base
     return mpc
 
 
@@ -111,6 +107,8 @@ def main():
     state_planner = StatePlanner(robot, HORIZON, DT_MPC)
     visualizer = MPCMeshcatVisualizer(viewer_robot, robot, FOOT_NAMES, DT_MPC)
 
+    velocity_base = np.zeros(6)
+    velocity_base[0] = 1.0
     x_current = np.array(robot.getReferenceState())
     q_traj = [np.array(x_current[: robot.getModel().nq])]
     x_traj = [x_current]
@@ -122,7 +120,7 @@ def main():
         state_reference = build_state_ref(
             state_planner,
             x_current,
-            mpc.velocity_base,
+            velocity_base,
         )
 
         start = time.perf_counter()
