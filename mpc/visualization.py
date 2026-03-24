@@ -98,12 +98,13 @@ class MPCMeshcatVisualizer:
                 horizon_data["forces"][foot_name],
             )
 
-    def play(self, q_traj, horizons, repeat=True):
+    def play(self, q_traj, horizons, repeat=True, sleep=True):
         while True:
             for q, horizon in zip(q_traj, horizons):
                 self.display_configuration(q)
                 self.display_horizon(horizon)
-                time.sleep(self.dt)
+                if sleep:
+                    time.sleep(self.dt)
             if not repeat:
                 break
 
