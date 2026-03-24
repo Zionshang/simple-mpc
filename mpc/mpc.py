@@ -40,7 +40,7 @@ class MPC:
         self.robot = robot
         self.model_ = robot.getModel()
         self.data_ = self.model_.createData()
-        self._update_kinematics(robot.getReferenceState(), update_com=True)
+        self._update_kinematics(robot.getReferenceState())
 
         starting_poses = {}
         for foot_nb in range(robot.getFeetNb()):
@@ -119,18 +119,15 @@ class MPC:
 
         self.solver_.max_iters = self.settings_.max_iters
 
-        self.com0_ = np.array(self.data_.com[0])
         self.now_ = self.WALKING
         self.velocity_base_ = np.zeros(6)
 
-    def _update_kinematics(self, x: np.ndarray, update_com: bool = False) -> None:
+    def _update_kinematics(self, x: np.ndarray) -> None:
         x = np.asarray(x, dtype=float)
         q = x[: self.model_.nq]
         v = x[self.model_.nq :]
         pin.forwardKinematics(self.model_, self.data_, q, v)
         pin.updateFramePlacements(self.model_, self.data_)
-        if update_com:
-            pin.centerOfMass(self.model_, self.data_, q, v)
 
     @property
     def velocity_base(self):

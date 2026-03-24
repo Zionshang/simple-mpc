@@ -149,7 +149,7 @@ def rollout_ideal_mpc(mpc, x0, nq, visualizer):
         if step % 25 == 0:
             print(
                 f"step={step:03d} solve_time={solve_times[-1] * 1e3:.2f} ms "
-                f"com={x_current[:3]}"
+                f"body_pos={x_current[:3]}"
             )
 
     return {
