@@ -63,7 +63,7 @@ class FootPlanner:
         next_pose[:2] += (np.asarray(velocity_base[:2], dtype=float) + velocity_base[5] * twist_vect) * (
             self.T_fly_ + self.T_contact_
         ) * self.timestep_
-        next_pose[2] = foot_position[2]
+        next_pose[2] = foot_ref_position[2]
         return next_pose
 
     def extractPhaseTimings(self, horizon_contact_states, foot_nb: int, in_contact: bool):

@@ -5,12 +5,13 @@ import time
 import example_robot_data as erd
 import numpy as np
 
-from mpc import Gait, MPC, MPCMeshcatVisualizer, QuadKinodynOcp, QuadRobot
+from mpc import Gait, MPC, MPCMeshcatVisualizer, QuadKinodynOcp, QuadRobot, StatePlanner
 
 
 BASE_JOINT_NAME = "root_joint"
 FOOT_NAMES = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
 DT_MPC = 0.01
+DT_ROLLOUT = 0.005
 HORIZON = 50
 SIMULATION_STEPS = 500
 GAIT_NAME = "trot"
@@ -67,6 +68,18 @@ def build_kinodynamics_problem(robot):
     return problem, gravity
 
 
+def build_state_ref(
+    state_planner: StatePlanner,
+    x_current: np.ndarray,
+    velocity_base: np.ndarray,
+) -> np.ndarray:
+    state_planner.updateReference(x_current, velocity_base)
+    return np.asarray(
+        [state_planner.getReference(t) for t in range(HORIZON)],
+        dtype=float,
+    )
+
+
 def build_mpc(problem, robot, gravity, gait: Gait):
     contact_phases, fly_steps, contact_steps = gait.build_cycle()
 
@@ -80,6 +93,7 @@ def build_mpc(problem, robot, gravity, gait: Gait):
         T_fly=fly_steps,
         T_contact=contact_steps,
         timestep=DT_MPC,
+        rollout_timestep=DT_ROLLOUT,
     )
     mpc = MPC(mpc_conf, problem)
     mpc.generateCycleHorizon(contact_phases)
@@ -95,6 +109,7 @@ def main():
     gait = Gait(robot, GAIT_NAME, GAIT_CYCLE_PERIOD, DT_MPC)
     problem, gravity = build_kinodynamics_problem(robot)
     mpc = build_mpc(problem, robot, gravity, gait)
+    state_planner = StatePlanner(robot, HORIZON, DT_MPC)
     visualizer = MPCMeshcatVisualizer(viewer_robot, robot, FOOT_NAMES, DT_MPC)
 
     x_current = np.array(robot.getReferenceState())
@@ -105,14 +120,20 @@ def main():
     horizon_history = []
 
     for step in range(SIMULATION_STEPS):
+        state_reference = build_state_ref(
+            state_planner,
+            x_current,
+            mpc.velocity_base,
+        )
+
         start = time.perf_counter()
-        mpc.iterate(x_current)
+        mpc.iterate(x_current, state_reference)
         solve_times.append(time.perf_counter() - start)
 
         horizon_history.append(visualizer.capture_horizon(mpc))
         u_traj.append(np.array(mpc.us[0]))
 
-        x_current = np.array(mpc.xs[1])
+        x_current = mpc.rollout(x_current, mpc.us[0])
         x_traj.append(x_current)
         q_traj.append(np.array(x_current[: robot.getModel().nq]))
 

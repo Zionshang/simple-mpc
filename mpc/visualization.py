@@ -38,6 +38,7 @@ class MPCMeshcatVisualizer:
         self.reference_color = 0x3A86FF
         self.optimized_color = 0xE63946
         self.force_color = 0xF77F00
+        self.offline_plan_color = 0x2A9D8F
 
     def _update_kinematics(self, x: np.ndarray) -> None:
         x = np.asarray(x, dtype=float)
@@ -97,6 +98,10 @@ class MPCMeshcatVisualizer:
                 horizon_data["force_positions"][foot_name],
                 horizon_data["forces"][foot_name],
             )
+
+    def display_offline_plan(self, state_trajectory, path="offline/base"):
+        points = np.asarray(state_trajectory, dtype=float)[:, :3]
+        self._set_polyline(path, points, self.offline_plan_color)
 
     def play(self, q_traj, horizons, repeat=True, sleep=True):
         while True:

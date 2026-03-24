@@ -8,7 +8,6 @@ import pinocchio as pin
 import aligator
 
 from .foot_planner import FootPlanner
-from .state_planner import StatePlanner
 
 
 @dataclass
@@ -22,6 +21,7 @@ class MPCSettings:
     T_fly: int = 80
     T_contact: int = 20
     timestep: float = 0.01
+    rollout_timestep: float = 0.005
 
     @classmethod
     def from_dict(cls, settings: dict) -> "MPCSettings":
@@ -56,12 +56,6 @@ class MPC:
             self.ocp_handler_.getSize(),
             self.settings_.timestep,
         )
-        self.state_planner_ = StatePlanner(
-            robot,
-            self.ocp_handler_.getSize(),
-            self.settings_.timestep,
-        )
-
         self.x0_ = np.array(robot.getReferenceState(), dtype=float)
 
         self.solver_ = aligator.SolverProxDDP(
@@ -121,6 +115,7 @@ class MPC:
 
         self.now_ = self.WALKING
         self.velocity_base_ = np.zeros(6)
+        self.rollout_substeps_ = int(round(self.settings_.timestep / self.settings_.rollout_timestep))
 
     def _update_kinematics(self, x: np.ndarray) -> None:
         x = np.asarray(x, dtype=float)
@@ -148,6 +143,20 @@ class MPC:
     @property
     def us(self):
         return [u.copy() for u in self.us_]
+
+    def rollout(self, x: np.ndarray, u: np.ndarray, stage_index: int = 0) -> np.ndarray:
+        stage = self.ocp_handler_.getProblem().stages[stage_index]
+        integrator = aligator.dynamics.IntegratorSemiImplEuler(
+            stage.dynamics.differential_dynamics,
+            self.settings_.rollout_timestep,
+        )
+        control = np.asarray(u, dtype=float)
+        x_next = np.asarray(x, dtype=float)
+        for _ in range(self.rollout_substeps_):
+            data = integrator.createData()
+            integrator.forward(x_next, control, data)
+            x_next = np.array(data.xnext)
+        return x_next
 
     def _rotate_left(self, values):
         if values:
@@ -227,13 +236,12 @@ class MPC:
     def getHorizonContactStates(self):
         return [self.ocp_handler_.getContactState(t) for t in range(self.ocp_handler_.getSize())]
 
-    def updateStateReferences(self, x_current: np.ndarray) -> None:
-        self.state_planner_.updateReference(x_current, self.velocity_base_)
+    def updateStateReferences(self, state_ref: np.ndarray) -> None:
         for time in range(self.ocp_handler_.getSize()):
-            self.ocp_handler_.setReferenceState(time, self.state_planner_.getReference(time))
+            self.ocp_handler_.setReferenceState(time, state_ref[time])
 
-    def updateStepTrackerReferences(self, x_current: np.ndarray) -> None:
-        self.updateStateReferences(x_current)
+    def updateStepTrackerReferences(self, state_ref: np.ndarray) -> None:
+        self.updateStateReferences(state_ref)
         horizon_contact_states = self.getHorizonContactStates()
         for name in self.ee_names_:
             foot_nb = self.robot.getFootNb(name)
@@ -255,7 +263,6 @@ class MPC:
             for time in range(self.ocp_handler_.getSize()):
                 pose.translation = self.foot_planner_.getReference(name)[time]
                 self.ocp_handler_.setReferencePose(time, name, pose)
-
 
     def getReferencePose(self, t: int, ee_name: str) -> pin.SE3:
         return self.ocp_handler_.getReferencePose(t, ee_name)
@@ -290,10 +297,10 @@ class MPC:
 
             self.updateCycleTiming(True)
 
-    def iterate(self, x: np.ndarray) -> None:
+    def iterate(self, x: np.ndarray, state_ref: np.ndarray) -> None:
         self._update_kinematics(x)
         self.recedeWithCycle()
-        self.updateStepTrackerReferences(x)
+        self.updateStepTrackerReferences(state_ref)
 
         self.x0_ = np.array(x, dtype=float)
         self.xs_.pop(0)
