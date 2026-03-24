@@ -9,7 +9,7 @@ import tty
 import example_robot_data as erd
 import numpy as np
 
-from mpc import MPC, MPCMeshcatVisualizer, QuadKinodynOcp, QuadRobot
+from mpc import Gait, MPC, MPCMeshcatVisualizer, QuadKinodynOcp, QuadRobot
 
 
 BASE_JOINT_NAME = "root_joint"
@@ -17,8 +17,8 @@ FOOT_NAMES = ["FL_foot", "FR_foot", "RL_foot", "RR_foot"]
 DT_MPC = 0.01
 HORIZON = 50
 SIMULATION_STEPS = 500
-T_DOUBLE_SUPPORT = 10
-T_SINGLE_SUPPORT = 30
+GAIT_NAME = "trot"
+GAIT_CYCLE_PERIOD = 0.6
 
 
 def read_single_key():
@@ -103,7 +103,9 @@ def build_kinodynamics_problem(robot):
     return problem, gravity
 
 
-def build_mpc(problem, robot, gravity):
+def build_mpc(problem, robot, gravity, gait: Gait):
+    contact_phases, fly_steps, contact_steps = gait.build_cycle()
+
     mpc_conf = dict(
         support_force=-robot.getMass() * gravity[2],
         TOL=1e-4,
@@ -111,30 +113,11 @@ def build_mpc(problem, robot, gravity):
         max_iters=1,
         num_threads=8,
         swing_apex=0.30,
-        T_fly=T_SINGLE_SUPPORT,
-        T_contact=T_DOUBLE_SUPPORT,
+        T_fly=fly_steps,
+        T_contact=contact_steps,
         timestep=DT_MPC,
     )
     mpc = MPC(mpc_conf, problem)
-
-    contact_phase_quadru = {name: True for name in FOOT_NAMES}
-    contact_phase_lift_fl_rr = {
-        "FL_foot": False,
-        "FR_foot": True,
-        "RL_foot": True,
-        "RR_foot": False,
-    }
-    contact_phase_lift_fr_rl = {
-        "FL_foot": True,
-        "FR_foot": False,
-        "RL_foot": False,
-        "RR_foot": True,
-    }
-
-    contact_phases = [contact_phase_quadru] * T_DOUBLE_SUPPORT
-    contact_phases += [contact_phase_lift_fl_rr] * T_SINGLE_SUPPORT
-    contact_phases += [contact_phase_quadru] * T_DOUBLE_SUPPORT
-    contact_phases += [contact_phase_lift_fr_rl] * T_SINGLE_SUPPORT
     mpc.generateCycleHorizon(contact_phases)
 
     velocity_base = np.zeros(6)
@@ -191,8 +174,9 @@ def parse_args():
 def main():
     args = parse_args()
     viewer_robot, robot = build_robot()
+    gait = Gait(robot, GAIT_NAME, GAIT_CYCLE_PERIOD, DT_MPC)
     problem, gravity = build_kinodynamics_problem(robot)
-    mpc = build_mpc(problem, robot, gravity)
+    mpc = build_mpc(problem, robot, gravity, gait)
     visualizer = MPCMeshcatVisualizer(viewer_robot, robot, FOOT_NAMES, DT_MPC)
 
     x0 = np.array(robot.getReferenceState())
