@@ -82,32 +82,16 @@ def build_kinodynamics_problem(robot):
     )
     w_u = np.diag(w_u)
 
-    w_cent_lin = np.array([0.0, 0.0, 1.0])
-    w_cent_ang = np.array([0.1, 0.1, 10.0])
-    w_cent = np.diag(np.concatenate((w_cent_lin, w_cent_ang)))
-
-    w_centder_lin = np.zeros(3)
-    w_centder_ang = np.ones(3) * 0.1
-    w_centder = np.diag(np.concatenate((w_centder_lin, w_centder_ang)))
-
     w_frame = np.diag(np.array([100.0, 100.0, 500.0]))
     problem_conf = dict(
         timestep=DT_MPC,
         w_x=w_x,
         w_u=w_u,
-        w_cent=w_cent,
-        w_centder=w_centder,
         gravity=gravity,
         w_frame=w_frame,
-        qmin=robot.getModel().lowerPositionLimit[7:],
-        qmax=robot.getModel().upperPositionLimit[7:],
         mu=0.8,
         kinematics_limits=False,
         land_cstr=False,
-        cent_cost=False,
-        centder_cost=False,
-        term_cent_cost=False,
-        term_dcm_cstr=False,
     )
 
     problem = QuadKinodynOcp(problem_conf, robot)
@@ -115,7 +99,6 @@ def build_kinodynamics_problem(robot):
         robot.getReferenceState(),
         HORIZON,
         gravity[2],
-        False,
     )
     return problem, gravity
 

@@ -230,13 +230,6 @@ class MPC:
         self.ocp_handler_.setReferenceState(horizon - 1, self.x_reference_)
         self.ocp_handler_.setVelocityBase(horizon - 1, self.velocity_base_)
 
-        com_ref = np.zeros(3)
-        for name in self.ee_names_:
-            com_ref += self.foot_planner_.getReference(name)[-1]
-        com_ref /= float(len(self.ee_names_))
-        com_ref[2] += self.com0_[2]
-        self.ocp_handler_.updateTerminalConstraint(com_ref)
-
     def updateStepTrackerReferences(self) -> None:
         horizon_contact_states = self.getHorizonContactStates()
         for name in self.ee_names_:

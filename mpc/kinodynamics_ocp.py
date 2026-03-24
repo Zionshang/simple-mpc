@@ -28,8 +28,6 @@ class QuadKinodynOcp:
         self.size_ = 0
         self.problem_: aligator.TrajOptProblem | None = None
         self.problem_initialized_ = False
-        self.terminal_constraint_ = False
-        self.terminal_dcm_residual_ = None
 
     def _foot_names(self) -> list[str]:
         return self.robot.getFeetFrameNames()
@@ -84,32 +82,6 @@ class QuadKinodynOcp:
             aligator.QuadraticControlCost(space, self.control_ref_, self.settings_["w_u"]),
         )
 
-        if self.settings_.get("cent_cost", False):
-            cent_mom = aligator.CentroidalMomentumResidual(
-                space.ndx,
-                self.nu_,
-                self.robot.getModel(),
-                np.zeros(6),
-            )
-            rcost.addCost(
-                "centroidal_cost",
-                aligator.QuadraticResidualCost(space, cent_mom, self.settings_["w_cent"]),
-            )
-
-        if self.settings_.get("centder_cost", False):
-            centder_mom = aligator.CentroidalMomentumDerivativeResidual(
-                space.ndx,
-                self.robot.getModel(),
-                np.asarray(self.settings_["gravity"], dtype=float),
-                contact_states,
-                self.robot.getFeetFrameIds(),
-                FORCE_SIZE,
-            )
-            rcost.addCost(
-                "centroidal_derivative_cost",
-                aligator.QuadraticResidualCost(space, centder_mom, self.settings_["w_centder"]),
-            )
-
         for foot_nb, name in enumerate(self._foot_names()):
             frame_id = self.robot.getFootFrameId(foot_nb)
             frame_residual = aligator.FrameTranslationResidual(
@@ -136,15 +108,14 @@ class QuadKinodynOcp:
         stage = aligator.StageModel(rcost, dyn_model)
 
         if self.settings_.get("kinematics_limits", False):
+            qmin = np.asarray(self.model_.lowerPositionLimit[7:], dtype=float)
+            qmax = np.asarray(self.model_.upperPositionLimit[7:], dtype=float)
             state_fn = aligator.StateErrorResidual(space, self.nu_, space.neutral())
             state_id = list(range(6, self.nv_))
             state_slice = aligator.StageFunctionSliceXpr(state_fn, state_id)
             stage.addConstraint(
                 state_slice,
-                constraints.BoxConstraint(
-                    np.asarray(self.settings_["qmin"], dtype=float),
-                    np.asarray(self.settings_["qmax"], dtype=float),
-                ),
+                constraints.BoxConstraint(qmin, qmax),
             )
 
         v_ref = pin.Motion.Zero()
@@ -223,53 +194,13 @@ class QuadKinodynOcp:
             ),
         )
 
-        if self.settings_.get("term_cent_cost", False):
-            cent_mom = aligator.CentroidalMomentumResidual(
-                space.ndx,
-                self.nu_,
-                self.robot.getModel(),
-                np.zeros(6),
-            )
-            term_cost.addCost(
-                "centroidal_cost",
-                aligator.QuadraticResidualCost(space, cent_mom, self.settings_["w_cent"] * 10.0),
-            )
-
         return term_cost
-
-    def createTerminalConstraint(self, com_ref: np.ndarray) -> None:
-        if not self.problem_initialized_ or self.problem_ is None:
-            raise RuntimeError("Create problem first!")
-        if not self.settings_.get("term_dcm_cstr", False):
-            self.terminal_constraint_ = False
-            self.terminal_dcm_residual_ = None
-            return
-
-        com_ref = np.asarray(com_ref, dtype=float)
-        tau = float(np.sqrt(com_ref[2] / 9.81))
-        self.terminal_dcm_residual_ = aligator.DCMPositionResidual(
-            self.ndx_,
-            self.nu_,
-            self.robot.getModel(),
-            com_ref,
-            tau,
-        )
-        self.problem_.addTerminalConstraint(
-            self.terminal_dcm_residual_,
-            constraints.EqualityConstraintSet(),
-        )
-        self.terminal_constraint_ = True
-
-    def updateTerminalConstraint(self, com_ref: np.ndarray) -> None:
-        if self.settings_.get("term_dcm_cstr", False) and self.terminal_constraint_:
-            self.terminal_dcm_residual_.setReference(np.asarray(com_ref, dtype=float))
 
     def createProblem(
         self,
         x0: np.ndarray,
         horizon: int,
         gravity: float,
-        terminal_constraint: bool,
     ) -> None:
         self.size_ = int(horizon)
 
@@ -292,11 +223,6 @@ class QuadKinodynOcp:
         stage_models = self.createStages(contact_phases, contact_poses, contact_forces)
         self.problem_ = aligator.TrajOptProblem(x0, stage_models, self.createTerminalCost())
         self.problem_initialized_ = True
-        self.terminal_constraint_ = False
-        self.terminal_dcm_residual_ = None
-
-        if terminal_constraint:
-            self.createTerminalConstraint(x0[:3])
 
     def getProblem(self):
         if self.problem_ is None:
