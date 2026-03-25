@@ -74,7 +74,6 @@ def build_recording_mpc(problem, robot, record_config: RecordConfig):
         T_fly=fly_steps,
         T_contact=contact_steps,
         timestep=record_config.dt_mpc,
-        rollout_timestep=record_config.dt_sim,
     )
     mpc = MPC(mpc_conf, problem)
     mpc.generateCycleHorizon(contact_phases)
@@ -126,6 +125,7 @@ def main() -> None:
 
     total_solve_time = 0.0
     total_solve_steps = 0
+    rollout_steps_per_mpc = int(round(record_config.dt_mpc / record_config.dt_sim))
     shared_robot = None
     shared_mpc = None
     x_current = None
@@ -169,18 +169,21 @@ def main() -> None:
             solve_time = time.perf_counter() - start_time
             solve_times.append(solve_time)
 
-            # Rollout simulation
-            x_current = mpc.rollout(x_current, mpc.us[0]).astype(np.float64, copy=False)
+            horizon = visualizer.capture_horizon(mpc) if visualizer is not None else None
+            u0 = np.array(mpc.us[0])
+            for _ in range(rollout_steps_per_mpc):
+                # Rollout simulation
+                x_current = mpc.rollout(x_current, u0, record_config.dt_sim).astype(np.float64, copy=False)
 
-            # Record
-            q_record.append(x_current[:nq].copy())
-            v_record.append(x_current[nq:].copy())
+                # Record
+                q_record.append(x_current[:nq].copy())
+                v_record.append(x_current[nq:].copy())
 
-            if visualizer is not None:
-                visualizer.display_configuration(x_current[:nq])
-                visualizer.display_horizon(visualizer.capture_horizon(mpc))
-                if record_config.visualization_sleep:
-                    time.sleep(record_config.dt_mpc)
+                if visualizer is not None:
+                    visualizer.display_configuration(x_current[:nq])
+                    visualizer.display_horizon(horizon)
+                    if record_config.visualization_sleep:
+                        time.sleep(record_config.dt_sim)
 
             # Print progress every few steps.
             if step % record_config.mpc_print_every == 0 or step == record_config.mpc_loops - 1:
@@ -190,7 +193,7 @@ def main() -> None:
                 )
 
         # Save one dataset per round after the low-level simulation loop finishes.
-        dataset = yaml_recorder.build_dataset(robot, q_record, v_record, source_dt=record_config.dt_mpc)
+        dataset = yaml_recorder.build_dataset(robot, q_record, v_record, source_dt=record_config.dt_sim)
         output_path = yaml_recorder.save_dataset(
             dataset=dataset,
             output_dir=record_config.recording_dir,

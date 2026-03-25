@@ -20,7 +20,6 @@ class MPCSettings:
     T_fly: int = 80
     T_contact: int = 20
     timestep: float = 0.01
-    rollout_timestep: float = 0.005
 
     @classmethod
     def from_dict(cls, settings: dict) -> "MPCSettings":
@@ -114,7 +113,6 @@ class MPC:
         self.solver_.max_iters = self.settings_.max_iters
 
         self.now_ = self.WALKING
-        self.rollout_substeps_ = int(round(self.settings_.timestep / self.settings_.rollout_timestep))
 
     def _update_kinematics(self, x: np.ndarray) -> None:
         x = np.asarray(x, dtype=float)
@@ -131,19 +129,21 @@ class MPC:
     def us(self):
         return [u.copy() for u in self.us_]
 
-    def rollout(self, x: np.ndarray, u: np.ndarray, stage_index: int = 0) -> np.ndarray:
+    def rollout(
+        self,
+        x: np.ndarray,
+        u: np.ndarray,
+        dt: float,
+        stage_index: int = 0,
+    ) -> np.ndarray:
         stage = self.ocp_.getProblem().stages[stage_index]
         integrator = aligator.dynamics.IntegratorSemiImplEuler(
             stage.dynamics.differential_dynamics,
-            self.settings_.rollout_timestep,
+            dt,
         )
-        control = np.asarray(u, dtype=float)
-        x_next = np.asarray(x, dtype=float)
-        for _ in range(self.rollout_substeps_):
-            data = integrator.createData()
-            integrator.forward(x_next, control, data)
-            x_next = np.array(data.xnext)
-        return x_next
+        data = integrator.createData()
+        integrator.forward(np.asarray(x, dtype=float), np.asarray(u, dtype=float), data)
+        return np.array(data.xnext)
 
     def _rotate_left(self, values):
         if values:

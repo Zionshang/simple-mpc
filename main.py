@@ -92,7 +92,6 @@ def build_mpc(problem, robot, gravity, gait: Gait):
         T_fly=fly_steps,
         T_contact=contact_steps,
         timestep=DT_MPC,
-        rollout_timestep=DT_ROLLOUT,
     )
     mpc = MPC(mpc_conf, problem)
     mpc.generateCycleHorizon(contact_phases)
@@ -105,10 +104,11 @@ def main():
     problem, gravity = build_kinodynamics_problem(robot)
     mpc = build_mpc(problem, robot, gravity, gait)
     state_planner = StatePlanner(robot, HORIZON, DT_MPC)
-    visualizer = MPCMeshcatVisualizer(viewer_robot, robot, FOOT_NAMES, DT_MPC)
+    visualizer = MPCMeshcatVisualizer(viewer_robot, robot, FOOT_NAMES, DT_ROLLOUT)
 
     velocity_base = np.zeros(6)
     velocity_base[0] = 1.0
+    rollout_steps_per_mpc = int(round(DT_MPC / DT_ROLLOUT))
     x_current = np.array(robot.getReferenceState())
     q_traj = [np.array(x_current[: robot.getModel().nq])]
     x_traj = [x_current]
@@ -127,12 +127,15 @@ def main():
         mpc.iterate(x_current, state_reference)
         solve_times.append(time.perf_counter() - start)
 
-        horizon_history.append(visualizer.capture_horizon(mpc))
-        u_traj.append(np.array(mpc.us[0]))
+        horizon = visualizer.capture_horizon(mpc)
+        u0 = np.array(mpc.us[0])
+        u_traj.append(u0)
 
-        x_current = mpc.rollout(x_current, mpc.us[0])
-        x_traj.append(x_current)
-        q_traj.append(np.array(x_current[: robot.getModel().nq]))
+        for _ in range(rollout_steps_per_mpc):
+            x_current = mpc.rollout(x_current, u0, DT_ROLLOUT)
+            x_traj.append(x_current)
+            q_traj.append(np.array(x_current[: robot.getModel().nq]))
+            horizon_history.append(horizon)
 
         if step % 25 == 0:
             print(
